@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  cancelMissionTransfer,
   clearMissionPlan,
   downloadMissionPlan,
   subscribeMissionError,
@@ -69,6 +70,11 @@ export default function App() {
   const [homeLonInput, setHomeLonInput] = useState("");
   const [homeAltInput, setHomeAltInput] = useState("");
   const browserMockTimer = useRef<number | null>(null);
+
+  const transferActive =
+    missionProgress?.phase === "request_count" ||
+    missionProgress?.phase === "transfer_items" ||
+    missionProgress?.phase === "await_ack";
 
   useEffect(() => {
     let stopTelemetry: (() => void) | null = null;
@@ -228,6 +234,7 @@ export default function App() {
 
   async function handleSimulateMissionUpload() {
     setMissionTransferError(null);
+    setMissionProgress(null);
     if (sessionId === null) {
       setError("connect to vehicle before mission write");
       return;
@@ -241,6 +248,7 @@ export default function App() {
 
   async function handleSimulateMissionDownload() {
     setMissionTransferError(null);
+    setMissionProgress(null);
     if (sessionId === null) {
       setError("connect to vehicle before mission read");
       return;
@@ -265,6 +273,7 @@ export default function App() {
 
   async function handleSimulateMissionClear() {
     setMissionTransferError(null);
+    setMissionProgress(null);
     if (sessionId === null) {
       setError("connect to vehicle before mission clear");
       return;
@@ -290,9 +299,25 @@ export default function App() {
       setError("connect to vehicle before verify");
       return;
     }
+    setMissionTransferError(null);
+    setMissionProgress(null);
+    setRoundtripStatus("Verifying...");
     try {
       const ok = await verifyMissionRoundtrip(sessionId, buildMissionPlan());
       setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
+    } catch (err) {
+      setRoundtripStatus("Verify failed");
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleCancelTransfer() {
+    if (sessionId === null) {
+      return;
+    }
+    try {
+      await cancelMissionTransfer(sessionId);
+      setMissionTransferError(null);
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -691,9 +716,9 @@ export default function App() {
                   Move Down
                 </button>
                 <button onClick={handleValidateMission}>Validate Plan</button>
-                <button onClick={handleSimulateMissionUpload}>Write</button>
-                <button onClick={handleSimulateMissionDownload}>Read</button>
-                <button onClick={handleVerifyRoundtrip}>Verify</button>
+                <button disabled={transferActive} onClick={handleSimulateMissionUpload}>Write</button>
+                <button disabled={transferActive} onClick={handleSimulateMissionDownload}>Read</button>
+                <button disabled={transferActive} onClick={handleVerifyRoundtrip}>Verify</button>
                 <button
                   className="secondary"
                   disabled={missionType !== "mission"}
@@ -701,16 +726,21 @@ export default function App() {
                 >
                   Update Home from Vehicle
                 </button>
-                <button className="secondary" onClick={handleSimulateMissionClear}>
+                <button className="secondary" disabled={transferActive} onClick={handleSimulateMissionClear}>
                   Clear
                 </button>
                 <button
                   className="secondary"
-                  disabled={sessionId === null || selectedMissionSeq === null}
+                  disabled={transferActive || sessionId === null || selectedMissionSeq === null}
                   onClick={handleSetCurrentMissionItem}
                 >
                   Set Current
                 </button>
+                {transferActive ? (
+                  <button className="secondary" onClick={handleCancelTransfer}>
+                    Cancel Transfer
+                  </button>
+                ) : null}
               </div>
 
               <div className="planner-actions">

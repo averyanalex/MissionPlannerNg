@@ -41,7 +41,7 @@ fn run_roundtrip_case(plan: MissionPlan) {
     let (event_tx, event_rx) = mpsc::channel();
     let mut manager = LinkManager::new();
 
-    let session = manager.connect(
+    let (session, _cancel_flag) = manager.connect(
         ConnectRequest {
             endpoint: LinkEndpoint::Udp { bind_addr },
         },

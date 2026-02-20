@@ -201,7 +201,7 @@ Assumption: small focused team (4-6 engineers). Timeline can compress/expand bas
 Current status:
 - M0: complete
 - M1: complete
-- M2: active (mission model with first-class home position, wire boundary translation, HOME_POSITION telemetry, MapLibre 3D planner, map/table sync, transfer engine, SITL roundtrip suite passing; acceptance polish remains)
+- M2: complete (mission model with first-class home position, wire boundary translation, HOME_POSITION telemetry, MapLibre 3D planner, map/table sync, transfer engine with cancel support, SITL roundtrip suite passing, set-current via COMMAND_LONG)
 
 ## M0 - Foundation (Weeks 1-4) [COMPLETE]
 - Finalize architecture and ADRs
@@ -223,7 +223,7 @@ Exit criteria:
 - Connect to SITL and at least one real autopilot profile
 - Stable 30-minute telemetry session without crash
 
-## M2 - Mission Planning MVP (Weeks 11-16) [ACTIVE]
+## M2 - Mission Planning MVP (Weeks 11-16) [COMPLETE]
 
 Goal:
 - Operator can create/edit/upload/download/verify basic missions on SITL from the new app.
@@ -373,9 +373,9 @@ Exit criteria:
 ## 11) Immediate Next Steps (Current - M2 Closing)
 
 1. ~~Stabilize SITL roundtrip suite~~ Done: all 3 mission types passing, home position properly handled at wire boundary
-2. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
-3. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
-4. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)
+2. ~~Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX~~ Done: cancel via `Arc<AtomicBool>` flag, transfer buttons disabled during active transfers, verify UX feedback
+3. ~~Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling~~ Done: uses `COMMAND_LONG`, accepts `COMMAND_ACK` or `MISSION_CURRENT` response
+4. ~~Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)~~ Done: SITL roundtrip suite passing for all 3 mission types
 5. ~~Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable~~ Done: staged by default, strict via `MP_SITL_STRICT=1`
 
 This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.

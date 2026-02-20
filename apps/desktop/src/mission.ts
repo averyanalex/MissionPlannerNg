@@ -104,6 +104,10 @@ export async function setCurrentMissionItem(sessionId: string, seq: number): Pro
   await invoke("mission_set_current", { sessionId, seq });
 }
 
+export async function cancelMissionTransfer(sessionId: string): Promise<void> {
+  await invoke("mission_cancel", { sessionId });
+}
+
 export async function subscribeMissionProgress(cb: (event: TransferProgress) => void): Promise<UnlistenFn> {
   return listen<TransferProgress>("mission.progress", (event) => cb(event.payload));
 }

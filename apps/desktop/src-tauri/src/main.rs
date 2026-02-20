@@ -7,13 +7,16 @@ use mp_telemetry_core::{
     list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, HomePositionEvent, LinkManager,
     LinkStateEvent, MissionStateEvent, TelemetryEvent,
 };
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
 struct AppState {
     manager: Mutex<LinkManager>,
     event_tx: mpsc::Sender<CoreEvent>,
+    cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 #[tauri::command]
@@ -25,7 +28,13 @@ fn connect_link(
         .manager
         .lock()
         .map_err(|_| String::from("failed to lock link manager"))?;
-    Ok(manager.connect(request, state.event_tx.clone()))
+    let (response, cancel_flag) = manager.connect(request, state.event_tx.clone());
+    state
+        .cancel_flags
+        .lock()
+        .map_err(|_| String::from("failed to lock cancel flags"))?
+        .insert(response.session_id.clone(), cancel_flag);
+    Ok(response)
 }
 
 #[tauri::command]
@@ -35,6 +44,10 @@ fn disconnect_link(state: tauri::State<'_, AppState>, session_id: String) -> Res
         .lock()
         .map_err(|_| String::from("failed to lock link manager"))?;
     if manager.disconnect(&session_id) {
+        let _ = state
+            .cancel_flags
+            .lock()
+            .map(|mut flags| flags.remove(&session_id));
         Ok(())
     } else {
         Err(String::from("session not found"))
@@ -116,11 +129,28 @@ fn mission_set_current(
     manager.mission_set_current(&session_id, seq)
 }
 
+#[tauri::command]
+fn mission_cancel(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let flags = state
+        .cancel_flags
+        .lock()
+        .map_err(|_| String::from("failed to lock cancel flags"))?;
+    let flag = flags
+        .get(&session_id)
+        .ok_or_else(|| String::from("session not found"))?;
+    flag.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
 fn main() {
     let (event_tx, event_rx) = mpsc::channel::<CoreEvent>();
     let state = AppState {
         manager: Mutex::new(LinkManager::new()),
         event_tx,
+        cancel_flags: Mutex::new(HashMap::new()),
     };
 
     tauri::Builder::default()
@@ -163,7 +193,8 @@ fn main() {
             mission_download_plan,
             mission_clear_plan,
             mission_verify_roundtrip,
-            mission_set_current
+            mission_set_current,
+            mission_cancel
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");

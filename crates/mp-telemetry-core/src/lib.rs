@@ -116,11 +116,13 @@ impl LinkManager {
         &mut self,
         request: ConnectRequest,
         event_tx: mpsc::Sender<CoreEvent>,
-    ) -> ConnectResponse {
+    ) -> (ConnectResponse, Arc<AtomicBool>) {
         let session_id = Uuid::new_v4().to_string();
         let endpoint = request.endpoint.clone();
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_for_task = stop_flag.clone();
+        let transfer_cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = transfer_cancel.clone();
         let session_for_task = session_id.clone();
         let (command_tx, command_rx) = mpsc::channel();
 
@@ -130,6 +132,7 @@ impl LinkManager {
                 endpoint,
                 event_tx,
                 stop_for_task,
+                cancel_for_task,
                 command_rx,
             );
         });
@@ -142,7 +145,7 @@ impl LinkManager {
                 command_tx,
             },
         );
-        ConnectResponse { session_id }
+        (ConnectResponse { session_id }, transfer_cancel)
     }
 
     pub fn disconnect(&mut self, session_id: &str) -> bool {
@@ -273,6 +276,7 @@ fn run_session(
     endpoint: LinkEndpoint,
     event_tx: mpsc::Sender<CoreEvent>,
     stop_flag: Arc<AtomicBool>,
+    transfer_cancel: Arc<AtomicBool>,
     command_rx: mpsc::Receiver<SessionCommand>,
 ) {
     emit_link(
@@ -314,6 +318,7 @@ fn run_session(
                 &mut aggregate,
                 &mut vehicle_target,
                 &stop_flag,
+                &transfer_cancel,
             );
             continue;
         }
@@ -380,6 +385,7 @@ fn handle_session_command(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
 ) {
     match command {
         SessionCommand::Upload { plan, reply_tx } => {
@@ -390,6 +396,7 @@ fn handle_session_command(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 plan,
             );
             let _ = reply_tx.send(result);
@@ -405,6 +412,7 @@ fn handle_session_command(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 mission_type,
             );
             let _ = reply_tx.send(result);
@@ -420,6 +428,7 @@ fn handle_session_command(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 mission_type,
             );
             let _ = reply_tx.send(result);
@@ -433,6 +442,7 @@ fn handle_session_command(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 seq,
             );
             let _ = reply_tx.send(result);
@@ -447,8 +457,11 @@ fn mission_set_current_internal(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     seq: u16,
 ) -> Result<(), String> {
+    cancel_flag.store(false, Ordering::Relaxed);
+
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
@@ -457,10 +470,18 @@ fn mission_set_current_internal(
     let send_set_current = |connection: &mut dyn MavConnection<common::MavMessage>| {
         send_message(
             connection,
-            common::MavMessage::MISSION_SET_CURRENT(common::MISSION_SET_CURRENT_DATA {
-                seq,
+            common::MavMessage::COMMAND_LONG(common::COMMAND_LONG_DATA {
                 target_system: target.system_id,
                 target_component: target.component_id,
+                command: common::MavCmd::MAV_CMD_DO_SET_MISSION_CURRENT,
+                confirmation: 0,
+                param1: seq as f32,
+                param2: 0.0,
+                param3: 0.0,
+                param4: 0.0,
+                param5: 0.0,
+                param6: 0.0,
+                param7: 0.0,
             }),
         )
     };
@@ -479,18 +500,35 @@ fn mission_set_current_internal(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 remaining,
-                |msg| matches!(msg, common::MavMessage::MISSION_CURRENT(_)),
+                |msg| {
+                    matches!(
+                        msg,
+                        common::MavMessage::COMMAND_ACK(_)
+                            | common::MavMessage::MISSION_CURRENT(_)
+                    )
+                },
             ) {
                 Ok(message) => message,
                 Err(err) if err == MISSION_TIMEOUT_ERROR => break,
                 Err(err) => return Err(err),
             };
 
-            if let common::MavMessage::MISSION_CURRENT(data) = message {
-                if data.seq == seq {
-                    return Ok(());
+            match &message {
+                common::MavMessage::COMMAND_ACK(data) => {
+                    if data.command == common::MavCmd::MAV_CMD_DO_SET_MISSION_CURRENT
+                        && data.result == common::MavResult::MAV_RESULT_ACCEPTED
+                    {
+                        return Ok(());
+                    }
                 }
+                common::MavMessage::MISSION_CURRENT(data) => {
+                    if data.seq == seq {
+                        return Ok(());
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -498,10 +536,11 @@ fn mission_set_current_internal(
     emit_and_fail_mission(
         event_tx,
         "mission.set_current_timeout",
-        "Did not receive MISSION_CURRENT confirmation for requested sequence",
+        "Did not receive confirmation for set-current command",
     )
 }
 
+#[allow(deprecated)]
 fn mission_upload_internal(
     session_id: &str,
     event_tx: &mpsc::Sender<CoreEvent>,
@@ -509,8 +548,10 @@ fn mission_upload_internal(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     plan: MissionPlan,
 ) -> Result<(), String> {
+    cancel_flag.store(false, Ordering::Relaxed);
     let issues = mp_mission_core::validate_plan(&plan);
     if let Some(issue) = issues
         .iter()
@@ -563,6 +604,7 @@ fn mission_upload_internal(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 plan.mission_type,
                 machine.timeout_ms(),
             ) {
@@ -592,6 +634,7 @@ fn mission_upload_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            cancel_flag,
             Duration::from_millis(timeout),
             |msg| {
                 matches!(
@@ -672,6 +715,7 @@ fn mission_upload_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            cancel_flag,
             plan.mission_type,
             machine.timeout_ms(),
         ) {
@@ -690,6 +734,7 @@ fn mission_upload_internal(
     }
 }
 
+#[allow(deprecated)]
 fn mission_download_internal(
     session_id: &str,
     event_tx: &mpsc::Sender<CoreEvent>,
@@ -697,8 +742,10 @@ fn mission_download_internal(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     mission_type: MissionType,
 ) -> Result<MissionPlan, String> {
+    cancel_flag.store(false, Ordering::Relaxed);
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
@@ -729,6 +776,7 @@ fn mission_download_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            cancel_flag,
             Duration::from_millis(machine.timeout_ms()),
             |msg| matches!(msg, common::MavMessage::MISSION_COUNT(_)),
         ) {
@@ -794,6 +842,7 @@ fn mission_download_internal(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                cancel_flag,
                 Duration::from_millis(machine.timeout_ms()),
                 |msg| is_matching_mission_item(msg, seq, mission_type),
             ) {
@@ -849,8 +898,10 @@ fn mission_clear_internal(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     mission_type: MissionType,
 ) -> Result<(), String> {
+    cancel_flag.store(false, Ordering::Relaxed);
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
@@ -882,6 +933,7 @@ fn mission_clear_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            cancel_flag,
             mission_type,
             RetryPolicy::default().request_timeout_ms,
         ) {
@@ -907,6 +959,7 @@ fn wait_for_ack(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     mission_type: MissionType,
     timeout_ms: u64,
 ) -> Result<(), String> {
@@ -918,6 +971,7 @@ fn wait_for_ack(
         aggregate,
         vehicle_target,
         stop_flag,
+        cancel_flag,
         Duration::from_millis(timeout_ms),
         |msg| matches!(msg, common::MavMessage::MISSION_ACK(_)),
     )?;
@@ -984,6 +1038,7 @@ fn wait_for_message<F>(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
     timeout: Duration,
     mut predicate: F,
 ) -> Result<common::MavMessage, String>
@@ -994,6 +1049,9 @@ where
     while started.elapsed() <= timeout {
         if stop_flag.load(Ordering::Relaxed) {
             return Err(String::from("session stopped"));
+        }
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(String::from("transfer cancelled"));
         }
 
         match connection.try_recv() {
@@ -1157,6 +1215,7 @@ fn from_mission_item_data(data: common::MISSION_ITEM_INT_DATA) -> MissionItem {
     }
 }
 
+#[allow(deprecated)]
 fn from_mission_item_float_data(data: common::MISSION_ITEM_DATA) -> MissionItem {
     let is_global = matches!(
         data.frame,
@@ -1201,6 +1260,7 @@ fn mission_type_matches(received: common::MavMissionType, expected: MissionType)
     }
 }
 
+#[allow(deprecated)]
 fn is_matching_mission_item(
     message: &common::MavMessage,
     seq: u16,
@@ -1217,6 +1277,7 @@ fn is_matching_mission_item(
     }
 }
 
+#[allow(deprecated)]
 fn from_mav_frame(frame: common::MavFrame) -> MissionFrame {
     match frame {
         common::MavFrame::MAV_FRAME_MISSION => MissionFrame::Mission,
@@ -1519,13 +1580,19 @@ mod tests {
         })
     }
 
-    fn base_inputs() -> (TelemetryAggregate, Option<VehicleTarget>, Arc<AtomicBool>) {
+    fn base_inputs() -> (
+        TelemetryAggregate,
+        Option<VehicleTarget>,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+    ) {
         (
             TelemetryAggregate::default(),
             Some(VehicleTarget {
                 system_id: 1,
                 component_id: 1,
             }),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         )
     }
@@ -1562,7 +1629,7 @@ mod tests {
             home: None,
             items: vec![sample_item(0), sample_item(1)],
         };
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, event_rx) = mpsc::channel();
 
         let result = mission_upload_internal(
@@ -1572,6 +1639,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             plan,
         );
 
@@ -1619,7 +1687,7 @@ mod tests {
             accepted_ack(MissionType::Mission),
         ];
         let mut connection = MockConnection::new(messages);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, _event_rx) = mpsc::channel();
 
         let downloaded = mission_download_internal(
@@ -1629,6 +1697,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             MissionType::Mission,
         )
         .expect("download should succeed");
@@ -1651,7 +1720,7 @@ mod tests {
     #[test]
     fn clear_success_sends_clear_all() {
         let mut connection = MockConnection::new(vec![accepted_ack(MissionType::Mission)]);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, _event_rx) = mpsc::channel();
 
         let result = mission_clear_internal(
@@ -1661,6 +1730,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             MissionType::Mission,
         );
         assert!(result.is_ok());
@@ -1685,7 +1755,7 @@ mod tests {
             accepted_ack(MissionType::Fence),
         ];
         let mut connection = MockConnection::new(messages);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, _event_rx) = mpsc::channel();
 
         let downloaded = mission_download_internal(
@@ -1695,6 +1765,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             MissionType::Fence,
         )
         .expect("fence download should succeed");
@@ -1715,7 +1786,7 @@ mod tests {
                 opaque_id: 0,
             },
         )]);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, event_rx) = mpsc::channel();
 
         let result = mission_download_internal(
@@ -1725,6 +1796,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             MissionType::Mission,
         );
 
@@ -1747,7 +1819,7 @@ mod tests {
     #[test]
     fn set_current_sends_command_and_emits_state() {
         let mut connection = MockConnection::new(vec![mission_current(2, 5)]);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (mut aggregate, mut vehicle_target, stop_flag, cancel_flag) = base_inputs();
         let (event_tx, event_rx) = mpsc::channel();
 
         let result = mission_set_current_internal(
@@ -1757,6 +1829,7 @@ mod tests {
             &mut aggregate,
             &mut vehicle_target,
             &stop_flag,
+            &cancel_flag,
             2,
         );
 
@@ -1765,7 +1838,7 @@ mod tests {
         let sent = connection.sent_messages();
         assert!(sent
             .iter()
-            .any(|message| matches!(message, common::MavMessage::MISSION_SET_CURRENT(_))));
+            .any(|message| matches!(message, common::MavMessage::COMMAND_LONG(_))));
 
         let mission_states: Vec<MissionStateEvent> = event_rx
             .try_iter()

@@ -172,6 +172,13 @@ impl MissionTransferMachine {
         }
     }
 
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.phase,
+            TransferPhase::Completed | TransferPhase::Failed | TransferPhase::Cancelled
+        )
+    }
+
     pub fn timeout_ms(&self) -> u64 {
         if self.phase == TransferPhase::TransferItems {
             self.policy.item_timeout_ms
@@ -255,5 +262,68 @@ mod tests {
         machine.set_download_total(3);
         assert_eq!(machine.progress().phase, TransferPhase::TransferItems);
         assert_eq!(machine.timeout_ms(), 250);
+    }
+
+    #[test]
+    fn cancel_sets_cancelled_phase() {
+        let mut machine = MissionTransferMachine::new_upload(
+            MissionType::Mission,
+            3,
+            RetryPolicy::default(),
+        );
+        assert_eq!(machine.progress().phase, TransferPhase::RequestCount);
+        machine.cancel();
+        assert_eq!(machine.progress().phase, TransferPhase::Cancelled);
+    }
+
+    #[test]
+    fn timeout_after_cancel_is_noop() {
+        let mut machine = MissionTransferMachine::new_upload(
+            MissionType::Mission,
+            3,
+            RetryPolicy::default(),
+        );
+        machine.cancel();
+        assert_eq!(machine.progress().phase, TransferPhase::Cancelled);
+        assert!(machine.on_timeout().is_none());
+        assert_eq!(machine.progress().phase, TransferPhase::Cancelled);
+    }
+
+    #[test]
+    fn is_terminal_for_end_states() {
+        let mut completed = MissionTransferMachine::new_upload(
+            MissionType::Mission,
+            2,
+            RetryPolicy::default(),
+        );
+        completed.on_item_transferred();
+        completed.on_item_transferred();
+        completed.on_ack_success();
+        assert!(completed.is_terminal());
+        assert_eq!(completed.progress().phase, TransferPhase::Completed);
+
+        let mut failed = MissionTransferMachine::new_upload(
+            MissionType::Mission,
+            1,
+            RetryPolicy { max_retries: 0, ..RetryPolicy::default() },
+        );
+        let _ = failed.on_timeout();
+        assert!(failed.is_terminal());
+        assert_eq!(failed.progress().phase, TransferPhase::Failed);
+
+        let mut cancelled = MissionTransferMachine::new_download(
+            MissionType::Fence,
+            RetryPolicy::default(),
+        );
+        cancelled.cancel();
+        assert!(cancelled.is_terminal());
+        assert_eq!(cancelled.progress().phase, TransferPhase::Cancelled);
+
+        let active = MissionTransferMachine::new_upload(
+            MissionType::Mission,
+            3,
+            RetryPolicy::default(),
+        );
+        assert!(!active.is_terminal());
     }
 }
