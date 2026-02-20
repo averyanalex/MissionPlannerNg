@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  validateMissionPlan,
+  type MissionIssue,
+  type MissionItem,
+  type MissionPlan
+} from "./mission";
+import {
   connectLink,
   disconnectLink,
   listSerialPorts,
@@ -16,7 +22,10 @@ const emptyTelemetry: Telemetry = {
   ts: 0
 };
 
+type ActiveTab = "flight" | "planner";
+
 export default function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("flight");
   const [telemetry, setTelemetry] = useState<Telemetry>(emptyTelemetry);
   const [linkState, setLinkState] = useState<LinkStateEvent | null>(null);
   const [mode, setMode] = useState<"udp" | "serial">("udp");
@@ -27,6 +36,11 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"tauri" | "browser-mock">("tauri");
+  const [missionItems, setMissionItems] = useState<MissionItem[]>([
+    createWaypoint(0, 47.397742, 8.545594, 25),
+    createWaypoint(1, 47.3984, 8.5461, 30)
+  ]);
+  const [missionIssues, setMissionIssues] = useState<MissionIssue[]>([]);
   const browserMockTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -114,6 +128,56 @@ export default function App() {
     }
   }
 
+  async function handleValidateMission() {
+    setError(null);
+    const plan: MissionPlan = {
+      mission_type: "mission",
+      items: missionItems
+    };
+
+    try {
+      const issues = await validateMissionPlan(plan);
+      setMissionIssues(issues);
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  function updateMissionField(index: number, field: "command" | "z" | "param1" | "param2", value: number) {
+    setMissionItems((items) =>
+      items.map((item, current) =>
+        current === index
+          ? {
+              ...item,
+              [field]: value
+            }
+          : item
+      )
+    );
+  }
+
+  function updateMissionCoordinate(index: number, field: "x" | "y", valueDeg: number) {
+    const encoded = Math.round(valueDeg * 1e7);
+    setMissionItems((items) =>
+      items.map((item, current) => (current === index ? { ...item, [field]: encoded } : item))
+    );
+  }
+
+  function addWaypoint() {
+    setMissionItems((items) => {
+      const nextSeq = items.length;
+      const base = items[items.length - 1];
+      if (!base) {
+        return [createWaypoint(0, 47.397742, 8.545594, 25)];
+      }
+      return [...items, createWaypoint(nextSeq, base.x / 1e7 + 0.0004, base.y / 1e7 + 0.0004, base.z)];
+    });
+  }
+
+  function removeLastWaypoint() {
+    setMissionItems((items) => resequence(items.slice(0, -1)));
+  }
+
   function startBrowserMock() {
     setSessionId("browser-mock");
     setLinkState({
@@ -154,8 +218,12 @@ export default function App() {
       <header className="topbar">
         <div className="logo">Mission Planner NG</div>
         <nav>
-          <button>Flight Data</button>
-          <button>Planner</button>
+          <button className={activeTab === "flight" ? "nav-active" : ""} onClick={() => setActiveTab("flight")}>
+            Flight Data
+          </button>
+          <button className={activeTab === "planner" ? "nav-active" : ""} onClick={() => setActiveTab("planner")}>
+            Planner
+          </button>
           <button>Setup</button>
           <button>Config</button>
         </nav>
@@ -169,7 +237,7 @@ export default function App() {
           <div className="connect-box">
             <div className="row">
               <label>Mode</label>
-              <select value={mode} onChange={(event) => setMode(event.target.value as "udp" | "serial")}>
+              <select value={mode} onChange={(event) => setMode(event.target.value as "udp" | "serial")}> 
                 <option value="udp">UDP</option>
                 <option value="serial">Serial</option>
               </select>
@@ -244,15 +312,132 @@ export default function App() {
         </aside>
 
         <section className="map-panel">
-          <div className="map-placeholder">
-            <h3>Map Placeholder</h3>
-            <p>M1 ships link/session + telemetry. Map moves to next slice.</p>
-            <p>Telemetry timestamp: {telemetry.ts || 0}</p>
-          </div>
+          {activeTab === "flight" ? (
+            <div className="map-placeholder">
+              <h3>Map Placeholder</h3>
+              <p>Telemetry timestamp: {telemetry.ts || 0}</p>
+              <p>Planner tab now includes mission model validation.</p>
+            </div>
+          ) : (
+            <div className="planner-surface">
+              <h3>Mission Planner MVP</h3>
+              <div className="planner-actions">
+                <button onClick={addWaypoint}>Add Waypoint</button>
+                <button className="secondary" onClick={removeLastWaypoint}>
+                  Remove Last
+                </button>
+                <button onClick={handleValidateMission}>Validate Plan</button>
+              </div>
+
+              <div className="mission-table-wrap">
+                <table className="mission-table">
+                  <thead>
+                    <tr>
+                      <th>Seq</th>
+                      <th>Cmd</th>
+                      <th>Lat</th>
+                      <th>Lon</th>
+                      <th>Alt</th>
+                      <th>Hold</th>
+                      <th>Accept</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {missionItems.map((item, index) => (
+                      <tr key={item.seq}>
+                        <td>{item.seq}</td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.command}
+                            onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={(item.x / 1e7).toFixed(6)}
+                            onChange={(event) => updateMissionCoordinate(index, "x", Number(event.target.value) || 0)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            step="0.000001"
+                            value={(item.y / 1e7).toFixed(6)}
+                            onChange={(event) => updateMissionCoordinate(index, "y", Number(event.target.value) || 0)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.z}
+                            onChange={(event) => updateMissionField(index, "z", Number(event.target.value) || 0)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.param1}
+                            onChange={(event) => updateMissionField(index, "param1", Number(event.target.value) || 0)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            value={item.param2}
+                            onChange={(event) => updateMissionField(index, "param2", Number(event.target.value) || 0)}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mission-issues">
+                <h4>Validation Issues ({missionIssues.length})</h4>
+                {missionIssues.length === 0 ? (
+                  <p>No validation issues.</p>
+                ) : (
+                  <ul>
+                    {missionIssues.map((issue, index) => (
+                      <li key={`${issue.code}-${index}`}>
+                        [{issue.severity}] {issue.code}
+                        {typeof issue.seq === "number" ? ` @seq ${issue.seq}` : ""}: {issue.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
   );
+}
+
+function createWaypoint(seq: number, latDeg: number, lonDeg: number, altitudeM: number): MissionItem {
+  return {
+    seq,
+    command: 16,
+    frame: "global_relative_alt_int",
+    current: seq === 0,
+    autocontinue: true,
+    param1: 0,
+    param2: 1,
+    param3: 0,
+    param4: 0,
+    x: Math.round(latDeg * 1e7),
+    y: Math.round(lonDeg * 1e7),
+    z: altitudeM
+  };
+}
+
+function resequence(items: MissionItem[]): MissionItem[] {
+  return items.map((item, index) => ({ ...item, seq: index, current: index === 0 }));
 }
 
 function formatMaybe(value?: number) {

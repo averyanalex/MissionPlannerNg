@@ -49,6 +49,11 @@ body,
   padding: 6px 10px;
 }
 
+.topbar .nav-active {
+  background: #2d4157;
+  border-color: #4d6783;
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: minmax(240px, 320px) 1fr;
@@ -168,6 +173,77 @@ body,
   flex-direction: column;
   text-align: center;
   color: #9cb2c7;
+}
+
+.planner-surface {
+  min-height: 320px;
+  border: 1px solid #2e4055;
+  border-radius: 8px;
+  padding: 12px;
+  background: linear-gradient(180deg, #101924, #0f1721);
+}
+
+.planner-surface h3 {
+  margin-top: 0;
+}
+
+.planner-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.planner-actions button {
+  border: 1px solid #3a5068;
+  border-radius: 4px;
+  background: #1f2d3d;
+  color: #d7e6f6;
+  padding: 6px 10px;
+}
+
+.mission-table-wrap {
+  overflow: auto;
+}
+
+.mission-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.mission-table th,
+.mission-table td {
+  border: 1px solid #2f4358;
+  padding: 6px;
+}
+
+.mission-table th {
+  background: #1a2634;
+  color: #a9bfd4;
+  font-weight: 600;
+}
+
+.mission-table input {
+  width: 100%;
+  border: 1px solid #375069;
+  border-radius: 4px;
+  background: #101924;
+  color: #d7e6f6;
+  padding: 4px;
+}
+
+.mission-issues {
+  margin-top: 12px;
+  color: #a9bfd4;
+}
+
+.mission-issues h4 {
+  margin: 0 0 8px;
+}
+
+.mission-issues ul {
+  margin: 0;
+  padding-left: 16px;
 }
 
 @media (max-width: 900px) {
