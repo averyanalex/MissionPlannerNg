@@ -244,6 +244,25 @@ body,
   overflow: hidden;
 }
 
+.mission-pin {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #072035;
+  border-radius: 999px;
+  background: #12b9ff;
+  color: #03101a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.mission-pin.is-selected {
+  background: #ffb020;
+  transform: scale(1.08);
+}
+
 .mission-table {
   width: 100%;
   border-collapse: collapse;

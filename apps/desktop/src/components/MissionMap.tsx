@@ -2,17 +2,20 @@ import { useEffect, useMemo, useRef } from "react";
 import maplibregl, {
   type GeoJSONSource,
   type Map as MapLibreMap,
+  type Marker,
   type MapMouseEvent
 } from "maplibre-gl";
 import type { MissionItem } from "../mission";
 
 const DEFAULT_CENTER: [number, number] = [8.545594, 47.397742];
 const DEFAULT_ZOOM = 13;
-const MAP_STYLE_URL = "https://demotiles.maplibre.org/style.json";
+const BASE_STYLE_URL = "https://tiles.openfreemap.org/styles/bright";
+const SATELLITE_TILE_URL =
+  "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg";
+const DEM_TILESET_URL = "https://demotiles.maplibre.org/terrain-tiles/tiles.json";
 
 const SOURCE_ID = "mission-items";
 const LINE_LAYER_ID = "mission-line";
-const POINT_LAYER_ID = "mission-points";
 
 type MissionMapProps = {
   missionItems: MissionItem[];
@@ -24,6 +27,7 @@ type MissionMapProps = {
 export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectSeq }: MissionMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const markersRef = useRef<Map<number, Marker>>(new Map());
   const hasSetInitialViewport = useRef(false);
   const onAddWaypointRef = useRef(onAddWaypoint);
   const onSelectSeqRef = useRef(onSelectSeq);
@@ -38,20 +42,8 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
   }, [onAddWaypoint, onSelectSeq]);
 
   const missionGeoJson = useMemo(() => {
-    const pointFeatures = missionItems.map((item) => ({
-      type: "Feature" as const,
-      geometry: {
-        type: "Point" as const,
-        coordinates: [item.y / 1e7, item.x / 1e7]
-      },
-      properties: {
-        seq: item.seq,
-        selected: selectedSeq === item.seq
-      }
-    }));
-
     const lineCoordinates = missionItems.map((item) => [item.y / 1e7, item.x / 1e7]);
-    const features: any[] = [...pointFeatures];
+    const features: any[] = [];
 
     if (lineCoordinates.length >= 2) {
       features.push({
@@ -70,7 +62,7 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
       type: "FeatureCollection" as const,
       features
     };
-  }, [missionItems, selectedSeq]);
+  }, [missionItems]);
 
   useEffect(() => {
     missionGeoJsonRef.current = missionGeoJson;
@@ -83,45 +75,107 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: MAP_STYLE_URL,
       center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM
+      zoom: DEFAULT_ZOOM,
+      pitch: 60,
+      maxPitch: 85
     });
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-right");
+    map.setStyle(BASE_STYLE_URL, {
+      transformStyle: (_previousStyle, nextStyle) => {
+        const style = nextStyle as any;
+        style.projection = { type: "globe" };
+        style.sources = {
+          ...style.sources,
+          satelliteSource: {
+            type: "raster",
+            tiles: [SATELLITE_TILE_URL],
+            tileSize: 256
+          },
+          terrainSource: {
+            type: "raster-dem",
+            url: DEM_TILESET_URL,
+            tileSize: 256
+          },
+          hillshadeSource: {
+            type: "raster-dem",
+            url: DEM_TILESET_URL,
+            tileSize: 256
+          }
+        };
+        style.terrain = {
+          source: "terrainSource",
+          exaggeration: 1.25
+        };
+        style.sky = {
+          "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 2, 0]
+        };
 
-    map.on("load", () => {
-      map.addSource(SOURCE_ID, {
-        type: "geojson",
-        data: {
-          type: "FeatureCollection",
-          features: []
-        }
-      });
+        style.layers.push({
+          id: "hills",
+          type: "hillshade",
+          source: "hillshadeSource",
+          layout: { visibility: "visible" },
+          paint: { "hillshade-shadow-color": "#473B24" }
+        });
 
-      map.addLayer({
-        id: LINE_LAYER_ID,
-        type: "line",
-        source: SOURCE_ID,
-        filter: ["==", ["geometry-type"], "LineString"],
-        paint: {
-          "line-color": "#5ac8ff",
-          "line-width": 3
+        const firstNonFillLayer = style.layers.find(
+          (layer: any) => layer.type !== "fill" && layer.type !== "background"
+        );
+        if (firstNonFillLayer) {
+          style.layers.splice(style.layers.indexOf(firstNonFillLayer), 0, {
+            id: "satellite",
+            type: "raster",
+            source: "satelliteSource",
+            layout: { visibility: "visible" },
+            paint: { "raster-opacity": 1 }
+          });
         }
-      });
 
-      map.addLayer({
-        id: POINT_LAYER_ID,
-        type: "circle",
-        source: SOURCE_ID,
-        filter: ["==", ["geometry-type"], "Point"],
-        paint: {
-          "circle-radius": ["case", ["get", "selected"], 8, 6],
-          "circle-color": ["case", ["get", "selected"], "#ffb020", "#4da3ff"],
-          "circle-stroke-color": "#0c1623",
-          "circle-stroke-width": 2
-        }
-      });
+        return style;
+      }
+    });
+
+    map.addControl(
+      new maplibregl.NavigationControl({
+        showZoom: true,
+        showCompass: true,
+        visualizePitch: true
+      }),
+      "top-right"
+    );
+    map.addControl(new maplibregl.GlobeControl(), "top-right");
+    map.addControl(
+      new maplibregl.TerrainControl({
+        source: "terrainSource",
+        exaggeration: 1.25
+      }),
+      "top-right"
+    );
+
+    map.on("style.load", () => {
+      if (!map.getSource(SOURCE_ID)) {
+        map.addSource(SOURCE_ID, {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: []
+          }
+        });
+      }
+
+      if (!map.getLayer(LINE_LAYER_ID)) {
+        map.addLayer({
+          id: LINE_LAYER_ID,
+          type: "line",
+          source: SOURCE_ID,
+          filter: ["==", ["geometry-type"], "LineString"],
+          paint: {
+            "line-color": "#78d6ff",
+            "line-width": 4
+          }
+        });
+      }
 
       const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
       if (source) {
@@ -130,24 +184,16 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
     });
 
     map.on("click", (event: MapMouseEvent) => {
-      const renderedFeatures = map.queryRenderedFeatures(event.point, {
-        layers: [POINT_LAYER_ID]
-      });
-      if (renderedFeatures.length > 0) {
-        const seq = renderedFeatures[0].properties?.seq;
-        const numericSeq = typeof seq === "number" ? seq : Number(seq);
-        if (Number.isFinite(numericSeq)) {
-          onSelectSeqRef.current(numericSeq);
-          return;
-        }
-      }
-
       onAddWaypointRef.current(event.lngLat.lat, event.lngLat.lng);
     });
 
     mapRef.current = map;
 
     return () => {
+      for (const marker of markersRef.current.values()) {
+        marker.remove();
+      }
+      markersRef.current.clear();
       map.remove();
       mapRef.current = null;
       hasSetInitialViewport.current = false;
@@ -166,6 +212,53 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
     }
     source.setData(missionGeoJson);
   }, [missionGeoJson]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    const nextSeqs = new Set(missionItems.map((item) => item.seq));
+    for (const [seq, marker] of markersRef.current.entries()) {
+      if (!nextSeqs.has(seq)) {
+        marker.remove();
+        markersRef.current.delete(seq);
+      }
+    }
+
+    for (const item of missionItems) {
+      const existing = markersRef.current.get(item.seq);
+      const lngLat: [number, number] = [item.y / 1e7, item.x / 1e7];
+
+      if (existing) {
+        existing.setLngLat(lngLat);
+      } else {
+        const markerEl = document.createElement("button");
+        markerEl.type = "button";
+        markerEl.className = "mission-pin";
+        markerEl.addEventListener("click", (event) => {
+          event.stopPropagation();
+          onSelectSeqRef.current(item.seq);
+        });
+
+        const marker = new maplibregl.Marker({
+          element: markerEl,
+          anchor: "bottom"
+        })
+          .setLngLat(lngLat)
+          .addTo(map);
+
+        markersRef.current.set(item.seq, marker);
+      }
+
+      const markerElement = markersRef.current.get(item.seq)?.getElement();
+      if (markerElement) {
+        markerElement.textContent = String(item.seq + 1);
+        markerElement.classList.toggle("is-selected", selectedSeq === item.seq);
+      }
+    }
+  }, [missionItems, selectedSeq]);
 
   useEffect(() => {
     const map = mapRef.current;
