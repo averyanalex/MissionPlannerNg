@@ -88,8 +88,8 @@ MAVLink wire format puts home at seq 0 for Mission type. The rest of the codebas
 - **Serde rename**: All Rust enums use `#[serde(rename_all = "snake_case")]` for TypeScript compatibility. TypeScript types must use matching snake_case string literals.
 - **Coordinates**: `MissionItem.x`/`y` are lat/lon as `i32` in degE7 (multiply by 1e7). `HomePosition` uses `f64` degrees.
 - **Transfer state machine**: `MissionTransferMachine` in `transfer.rs` is a pure state machine (no I/O). The telemetry crate drives it by feeding MAVLink messages and extracting outbound messages.
-- **SITL tests**: Marked `#[ignore]` and run via `--ignored` flag. Must run with `--test-threads=1`. Use `is_optional_type_unsupported()` to skip fence/rally on targets that don't support them.
+- **SITL tests**: Marked `#[ignore]` and run via `--ignored` flag. Must run with `--test-threads=1`. Use `is_optional_type_unsupported()` to skip fence/rally on targets that don't support them. CI runs SITL roundtrip tests on every push and PR.
 
 ## Project Status
 
-M0/M1 complete, M2 (mission planning MVP) active. Roadmap details in `PLAN.md`.
+M0-M2 complete. Roadmap details in `PLAN.md`.

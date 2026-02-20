@@ -2,7 +2,7 @@
 
 Modern Mission Planner rewrite using Tauri + React + Rust.
 
-Current state: M0/M1 complete, M2 in progress (3D MapLibre planner, mission transfer engine, mission state events, staged SITL roundtrip automation).
+Current state: M0-M2 complete. Mission planning MVP shipped (3D MapLibre planner, mission transfer engine with cancel support, set-current via COMMAND_LONG, SITL roundtrip suite).
 
 ## Stack
 
@@ -107,7 +107,7 @@ In the app:
 - Bind address: `0.0.0.0:14550`
 - Connect
 
-You should then see telemetry and mission workflows available (Read/Write/Verify/Clear, Set Current).
+You should then see telemetry and mission workflows available (Read/Write/Verify/Clear, Set Current, Cancel Transfer).
 
 ### 4) (Optional) Run SITL roundtrip integration tests
 
@@ -123,8 +123,8 @@ docker rm -f ardupilot-sitl
 
 ## CI
 
-- `.github/workflows/ci.yml`: frontend + rust checks/tests (with rust cache and Linux system deps)
-- `.github/workflows/sitl-mission.yml`: staged SITL mission roundtrip workflow (manual/nightly)
+- `.github/workflows/ci.yml`: frontend typecheck/build + Rust check/tests on every push and PR
+- `.github/workflows/sitl-mission.yml`: SITL mission roundtrip integration tests on every push and PR (also available via manual dispatch)
 
 ## Planning
 

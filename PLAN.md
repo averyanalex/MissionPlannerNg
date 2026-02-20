@@ -376,6 +376,6 @@ Exit criteria:
 2. ~~Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX~~ Done: cancel via `Arc<AtomicBool>` flag, transfer buttons disabled during active transfers, verify UX feedback
 3. ~~Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling~~ Done: uses `COMMAND_LONG`, accepts `COMMAND_ACK` or `MISSION_CURRENT` response
 4. ~~Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)~~ Done: SITL roundtrip suite passing for all 3 mission types
-5. ~~Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable~~ Done: staged by default, strict via `MP_SITL_STRICT=1`
+5. ~~Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable~~ Done: promoted to run on every push and PR
 
 This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.
