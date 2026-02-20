@@ -19,35 +19,57 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install MAVProxy bridge dependency
-        run: python -m pip install --upgrade pip MAVProxy
-
       - name: Start ArduPilot SITL container
         run: |
           docker pull radarku/ardupilot-sitl
           docker run -d --rm --name ardupilot-sitl -p 5760:5760 radarku/ardupilot-sitl
 
-      - name: Start MAVProxy TCP->UDP bridge
-        run: |
-          mavproxy.py --master=tcp:127.0.0.1:5760 --out=udp:127.0.0.1:14550 > /tmp/mavproxy.log 2>&1 &
-
-      - name: Wait for SITL heartbeat path
+      - name: Wait for SITL TCP endpoint
         run: |
           python - <<'PY'
           import socket
           import time
 
-          deadline = time.time() + 45
+          deadline = time.time() + 90
+          while time.time() < deadline:
+              sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+              sock.settimeout(1)
+              try:
+                  sock.connect(("127.0.0.1", 5760))
+                  print("SITL TCP endpoint is reachable")
+                  break
+              except OSError:
+                  time.sleep(1)
+              finally:
+                  sock.close()
+          else:
+              raise SystemExit("Timed out waiting for SITL TCP endpoint on 5760")
+          PY
+
+      - name: Start MAVProxy TCP->UDP bridge
+        run: |
+          uvx --from mavproxy --with future --python 3.11 mavproxy.py --master=tcp:127.0.0.1:5760 --out=udp:127.0.0.1:14550 > /tmp/mavproxy.log 2>&1 &
+          echo $! > /tmp/mavproxy.pid
+
+      - name: Wait for SITL heartbeat path
+        run: |
+          python - <<'PY'
+          import os
+          import socket
+          import time
+
+          deadline = time.time() + 150
+          pid = int(open('/tmp/mavproxy.pid', 'r', encoding='utf-8').read().strip())
           sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
           sock.bind(("0.0.0.0", 14550))
           sock.settimeout(1)
 
           while time.time() < deadline:
+              try:
+                  os.kill(pid, 0)
+              except OSError:
+                  raise SystemExit("MAVProxy bridge exited before heartbeat arrived")
+
               try:
                   data, _addr = sock.recvfrom(4096)
                   if data:
@@ -74,4 +96,8 @@ jobs:
 
       - name: Stop SITL container
         if: always()
-        run: docker rm -f ardupilot-sitl || true
+        run: |
+          if [ -f /tmp/mavproxy.pid ]; then
+            kill $(cat /tmp/mavproxy.pid) || true
+          fi
+          docker rm -f ardupilot-sitl || true
