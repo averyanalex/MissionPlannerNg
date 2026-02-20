@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   frontend:
@@ -60,3 +61,47 @@ jobs:
 
       - name: Cargo test
         run: cargo test --workspace
+
+  sitl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [rust]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Start SITL bridge (with retry)
+        run: |
+          for attempt in 1 2 3; do
+            echo "=== Attempt $attempt ==="
+            if make bridge-up; then
+              echo "Bridge up on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed, tearing down..."
+            make bridge-down
+          done
+          echo "Failed to start bridge after 3 attempts"
+          exit 1
+
+      - name: Run SITL roundtrip suite
+        run: make test-sitl
+
+      - name: Dump bridge logs on failure
+        if: failure()
+        run: |
+          cat /tmp/missionplannerng-mavproxy.log 2>/dev/null || true
+          docker logs ardupilot-sitl 2>/dev/null || true
+
+      - name: Stop SITL bridge
+        if: always()
+        run: make bridge-down
