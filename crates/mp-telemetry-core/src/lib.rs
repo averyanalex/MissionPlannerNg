@@ -362,8 +362,6 @@ fn mission_upload_internal(
     stop_flag: &Arc<AtomicBool>,
     plan: MissionPlan,
 ) -> Result<(), String> {
-    ensure_supported_mission_type(plan.mission_type)?;
-
     let issues = mp_mission_core::validate_plan(&plan);
     if let Some(issue) = issues
         .iter()
@@ -520,7 +518,6 @@ fn mission_download_internal(
     stop_flag: &Arc<AtomicBool>,
     mission_type: MissionType,
 ) -> Result<MissionPlan, String> {
-    ensure_supported_mission_type(mission_type)?;
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
@@ -664,7 +661,6 @@ fn mission_clear_internal(
     stop_flag: &Arc<AtomicBool>,
     mission_type: MissionType,
 ) -> Result<(), String> {
-    ensure_supported_mission_type(mission_type)?;
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
@@ -900,16 +896,6 @@ fn update_vehicle_target(
             system_id: header.system_id,
             component_id: header.component_id,
         });
-    }
-}
-
-fn ensure_supported_mission_type(mission_type: MissionType) -> Result<(), String> {
-    if mission_type == MissionType::Mission {
-        Ok(())
-    } else {
-        Err(String::from(
-            "only mission_type=mission is supported by real transfer path right now",
-        ))
     }
 }
 
@@ -1326,6 +1312,36 @@ mod tests {
         assert!(sent
             .iter()
             .any(|message| matches!(message, common::MavMessage::MISSION_CLEAR_ALL(_))));
+    }
+
+    #[test]
+    fn download_supports_non_mission_types() {
+        let messages = vec![
+            common::MavMessage::MISSION_COUNT(common::MISSION_COUNT_DATA {
+                count: 1,
+                target_system: 255,
+                target_component: 190,
+            }),
+            mission_item_int(0),
+            accepted_ack(),
+        ];
+        let mut connection = MockConnection::new(messages);
+        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (event_tx, _event_rx) = mpsc::channel();
+
+        let downloaded = mission_download_internal(
+            "session-1",
+            &event_tx,
+            &mut connection,
+            &mut aggregate,
+            &mut vehicle_target,
+            &stop_flag,
+            MissionType::Fence,
+        )
+        .expect("fence download should succeed");
+
+        assert_eq!(downloaded.mission_type, MissionType::Fence);
+        assert_eq!(downloaded.items.len(), 1);
     }
 
     #[test]
