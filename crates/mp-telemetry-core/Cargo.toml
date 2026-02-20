@@ -1,0 +1,10 @@
+[package]
+name = "mp-telemetry-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mavlink = "0.17"
+serde = { version = "1", features = ["derive"] }
+serialport = { version = "4.8.1", default-features = false }
+uuid = { version = "1", features = ["v4", "serde"] }

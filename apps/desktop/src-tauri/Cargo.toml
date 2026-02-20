@@ -7,7 +7,7 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
+mp-telemetry-core = { path = "../../../crates/mp-telemetry-core" }
 tauri = { version = "2", features = [] }
 
 [features]

@@ -1,60 +1,93 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde::Serialize;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use mp_telemetry_core::{
+    list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, LinkManager, LinkStateEvent,
+    TelemetryEvent,
+};
+use std::sync::mpsc;
+use std::sync::Mutex;
 use tauri::Emitter;
 
-#[derive(Debug, Clone, Serialize)]
-struct Telemetry {
-    ts: u64,
-    altitude_m: f64,
-    speed_mps: f64,
-    fuel_pct: f64,
+struct AppState {
+    manager: Mutex<LinkManager>,
+    event_tx: mpsc::Sender<CoreEvent>,
 }
 
 #[tauri::command]
-fn get_mock_telemetry() -> Telemetry {
-    Telemetry {
-        ts: now_unix_secs(),
-        altitude_m: 1212.0,
-        speed_mps: 54.8,
-        fuel_pct: 89.0,
+fn connect_link(
+    state: tauri::State<'_, AppState>,
+    request: ConnectRequest,
+) -> Result<ConnectResponse, String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| String::from("failed to lock link manager"))?;
+    Ok(manager.connect(request, state.event_tx.clone()))
+}
+
+#[tauri::command]
+fn disconnect_link(state: tauri::State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let mut manager = state
+        .manager
+        .lock()
+        .map_err(|_| String::from("failed to lock link manager"))?;
+    if manager.disconnect(&session_id) {
+        Ok(())
+    } else {
+        Err(String::from("session not found"))
     }
 }
 
-fn now_unix_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
+#[tauri::command]
+fn list_serial_ports_cmd() -> Result<Vec<String>, String> {
+    list_serial_ports()
 }
 
 fn main() {
+    let (event_tx, event_rx) = mpsc::channel::<CoreEvent>();
+    let state = AppState {
+        manager: Mutex::new(LinkManager::new()),
+        event_tx,
+    };
+
     tauri::Builder::default()
-        .setup(|app| {
+        .manage(state)
+        .setup(move |app| {
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
-                let mut t = 0.0f64;
-                loop {
-                    let payload = Telemetry {
-                        ts: now_unix_secs(),
-                        altitude_m: 1212.0 + (t.sin() * 16.0),
-                        speed_mps: 54.8 + (t.cos() * 2.2),
-                        fuel_pct: (89.0 - (t / 60.0)).max(10.0),
-                    };
-
-                    if app_handle.emit("telemetry://tick", payload).is_err() {
-                        break;
+                while let Ok(event) = event_rx.recv() {
+                    match event {
+                        CoreEvent::Link(payload) => {
+                            let _ = emit_link_event(&app_handle, payload);
+                        }
+                        CoreEvent::Telemetry(payload) => {
+                            let _ = emit_telemetry_event(&app_handle, payload);
+                        }
                     }
-
-                    t += 0.3;
-                    std::thread::sleep(Duration::from_secs(1));
                 }
             });
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_mock_telemetry])
+        .invoke_handler(tauri::generate_handler![
+            connect_link,
+            disconnect_link,
+            list_serial_ports_cmd
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");
+}
+
+fn emit_link_event(
+    app_handle: &tauri::AppHandle,
+    payload: LinkStateEvent,
+) -> Result<(), tauri::Error> {
+    app_handle.emit("link://state", payload)
+}
+
+fn emit_telemetry_event(
+    app_handle: &tauri::AppHandle,
+    payload: TelemetryEvent,
+) -> Result<(), tauri::Error> {
+    app_handle.emit("telemetry://tick", payload)
 }

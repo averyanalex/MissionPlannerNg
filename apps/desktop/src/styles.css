@@ -69,6 +69,55 @@ body,
   font-size: 0.875rem;
 }
 
+.connect-box {
+  margin-bottom: 12px;
+  padding: 10px;
+  border-radius: 6px;
+  background: #1b2430;
+  border: 1px solid #2e4054;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.row label {
+  color: #9cb0c5;
+  font-size: 0.85rem;
+}
+
+.row input,
+.row select {
+  border: 1px solid #375069;
+  border-radius: 4px;
+  background: #101924;
+  color: #d7e6f6;
+  padding: 6px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.actions button,
+.secondary {
+  border: 1px solid #3a5068;
+  border-radius: 4px;
+  background: #1f2d3d;
+  color: #d7e6f6;
+  padding: 6px 10px;
+}
+
+.secondary {
+  margin-top: 4px;
+}
+
 .stat-card {
   margin-bottom: 10px;
   padding: 10px;
@@ -82,6 +131,23 @@ body,
 
 .stat-card strong {
   font-size: 1.4rem;
+}
+
+.meta-list {
+  color: #9cb2c7;
+  font-size: 0.85rem;
+}
+
+.meta-list p {
+  margin: 5px 0;
+}
+
+.error {
+  color: #ff9f9f;
+  background: #311b1b;
+  border: 1px solid #6a3f3f;
+  border-radius: 4px;
+  padding: 8px;
 }
 
 .map-panel {
