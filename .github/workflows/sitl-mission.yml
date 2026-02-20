@@ -24,61 +24,82 @@ jobs:
           docker pull radarku/ardupilot-sitl
           docker run -d --rm --name ardupilot-sitl -p 5760:5760 radarku/ardupilot-sitl
 
-      - name: Wait for SITL TCP endpoint
-        run: |
-          python - <<'PY'
-          import socket
-          import time
-
-          deadline = time.time() + 90
-          while time.time() < deadline:
-              sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-              sock.settimeout(1)
-              try:
-                  sock.connect(("127.0.0.1", 5760))
-                  print("SITL TCP endpoint is reachable")
-                  break
-              except OSError:
-                  time.sleep(1)
-              finally:
-                  sock.close()
-          else:
-              raise SystemExit("Timed out waiting for SITL TCP endpoint on 5760")
-          PY
-
-      - name: Start MAVProxy TCP->UDP bridge
-        run: |
-          uvx --from mavproxy --with future --python 3.11 mavproxy.py --master=tcp:127.0.0.1:5760 --out=udp:127.0.0.1:14550 > /tmp/mavproxy.log 2>&1 &
-          echo $! > /tmp/mavproxy.pid
-
-      - name: Wait for SITL heartbeat path
+      - name: Start bridge and wait for heartbeat path
         run: |
           python - <<'PY'
           import os
+          import signal
           import socket
+          import subprocess
+          import sys
           import time
 
-          deadline = time.time() + 150
-          pid = int(open('/tmp/mavproxy.pid', 'r', encoding='utf-8').read().strip())
-          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-          sock.bind(("0.0.0.0", 14550))
-          sock.settimeout(1)
+          def wait_for_tcp(timeout_s: int) -> bool:
+              deadline = time.time() + timeout_s
+              while time.time() < deadline:
+                  sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                  sock.settimeout(1)
+                  try:
+                      sock.connect(("127.0.0.1", 5760))
+                      return True
+                  except OSError:
+                      time.sleep(1)
+                  finally:
+                      sock.close()
+              return False
 
-          while time.time() < deadline:
+          def stop_file_pid(path: str):
+              if not os.path.exists(path):
+                  return
               try:
-                  os.kill(pid, 0)
-              except OSError:
-                  raise SystemExit("MAVProxy bridge exited before heartbeat arrived")
-
-              try:
-                  data, _addr = sock.recvfrom(4096)
-                  if data:
-                      print("Received UDP payload from bridge")
-                      break
-              except TimeoutError:
+                  pid = int(open(path, 'r', encoding='utf-8').read().strip())
+                  os.kill(pid, signal.SIGTERM)
+              except Exception:
                   pass
-          else:
-              raise SystemExit("Timed out waiting for SITL UDP data")
+
+          for attempt in range(1, 4):
+              if not wait_for_tcp(90):
+                  print(f"Attempt {attempt}: SITL TCP endpoint did not come up")
+              else:
+                  log = open('/tmp/mavproxy.log', 'w', encoding='utf-8')
+                  proc = subprocess.Popen([
+                      'uvx', '--from', 'mavproxy', '--with', 'future', '--python', '3.11',
+                      'mavproxy.py', '--master=tcp:127.0.0.1:5760', '--out=udp:127.0.0.1:14550'
+                  ], stdout=log, stderr=subprocess.STDOUT)
+                  open('/tmp/mavproxy.pid', 'w', encoding='utf-8').write(str(proc.pid))
+
+                  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                  sock.bind(("0.0.0.0", 14550))
+                  sock.settimeout(1)
+                  deadline = time.time() + 120
+                  got_udp = False
+
+                  while time.time() < deadline:
+                      if proc.poll() is not None:
+                          print(f"Attempt {attempt}: MAVProxy exited early with {proc.returncode}")
+                          break
+                      try:
+                          data, _addr = sock.recvfrom(4096)
+                          if data:
+                              got_udp = True
+                              break
+                      except TimeoutError:
+                          pass
+
+                  sock.close()
+                  log.close()
+                  if got_udp:
+                      print(f"Attempt {attempt}: received UDP payload from bridge")
+                      sys.exit(0)
+
+              stop_file_pid('/tmp/mavproxy.pid')
+              subprocess.run(['docker', 'rm', '-f', 'ardupilot-sitl'], check=False)
+              subprocess.run([
+                  'docker', 'run', '-d', '--rm', '--name', 'ardupilot-sitl', '-p', '5760:5760',
+                  'radarku/ardupilot-sitl'
+              ], check=True)
+
+          raise SystemExit('Timed out waiting for SITL UDP data after 3 attempts')
           PY
 
       - name: Run SITL roundtrip suite
