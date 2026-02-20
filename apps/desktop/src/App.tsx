@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  simulateMissionClear,
-  simulateMissionDownload,
-  simulateMissionUpload,
+  clearMissionPlan,
+  downloadMissionPlan,
   subscribeMissionError,
   subscribeMissionProgress,
+  uploadMissionPlan,
   validateMissionPlan,
   verifyMissionRoundtrip,
   type MissionIssue,
@@ -177,13 +177,17 @@ export default function App() {
 
   async function handleSimulateMissionUpload() {
     setMissionTransferError(null);
+    if (sessionId === null) {
+      setError("connect to vehicle before mission write");
+      return;
+    }
     const plan: MissionPlan = {
       mission_type: missionType,
       items: missionItems
     };
 
     try {
-      await simulateMissionUpload(plan);
+      await uploadMissionPlan(sessionId, plan);
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -191,8 +195,12 @@ export default function App() {
 
   async function handleSimulateMissionDownload() {
     setMissionTransferError(null);
+    if (sessionId === null) {
+      setError("connect to vehicle before mission read");
+      return;
+    }
     try {
-      const downloaded = await simulateMissionDownload(missionType);
+      const downloaded = await downloadMissionPlan(sessionId, missionType);
       setMissionItems(resequence(downloaded.items));
       setMissionIssues([]);
       setRoundtripStatus("Downloaded sample plan");
@@ -203,8 +211,12 @@ export default function App() {
 
   async function handleSimulateMissionClear() {
     setMissionTransferError(null);
+    if (sessionId === null) {
+      setError("connect to vehicle before mission clear");
+      return;
+    }
     try {
-      await simulateMissionClear(missionType);
+      await clearMissionPlan(sessionId, missionType);
       setMissionItems([]);
       setMissionIssues([]);
       setRoundtripStatus("Cleared");
@@ -214,13 +226,17 @@ export default function App() {
   }
 
   async function handleVerifyRoundtrip() {
+    if (sessionId === null) {
+      setError("connect to vehicle before verify");
+      return;
+    }
     const plan: MissionPlan = {
       mission_type: missionType,
       items: missionItems
     };
 
     try {
-      const ok = await verifyMissionRoundtrip(plan);
+      const ok = await verifyMissionRoundtrip(sessionId, plan);
       setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
     } catch (err) {
       setError(asErrorMessage(err));

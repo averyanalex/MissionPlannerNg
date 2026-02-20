@@ -66,20 +66,20 @@ export async function validateMissionPlan(plan: MissionPlan): Promise<MissionIss
   return invoke<MissionIssue[]>("mission_validate_plan", { plan });
 }
 
-export async function simulateMissionUpload(plan: MissionPlan): Promise<void> {
-  await invoke("mission_simulate_upload", { plan });
+export async function uploadMissionPlan(sessionId: string, plan: MissionPlan): Promise<void> {
+  await invoke("mission_upload_plan", { sessionId, plan });
 }
 
-export async function simulateMissionDownload(missionType: MissionType): Promise<MissionPlan> {
-  return invoke<MissionPlan>("mission_simulate_download", { missionType });
+export async function downloadMissionPlan(sessionId: string, missionType: MissionType): Promise<MissionPlan> {
+  return invoke<MissionPlan>("mission_download_plan", { sessionId, missionType });
 }
 
-export async function simulateMissionClear(missionType: MissionType): Promise<void> {
-  await invoke("mission_simulate_clear", { missionType });
+export async function clearMissionPlan(sessionId: string, missionType: MissionType): Promise<void> {
+  await invoke("mission_clear_plan", { sessionId, missionType });
 }
 
-export async function verifyMissionRoundtrip(plan: MissionPlan): Promise<boolean> {
-  return invoke<boolean>("mission_verify_roundtrip", { plan });
+export async function verifyMissionRoundtrip(sessionId: string, plan: MissionPlan): Promise<boolean> {
+  return invoke<boolean>("mission_verify_roundtrip", { sessionId, plan });
 }
 
 export async function subscribeMissionProgress(cb: (event: TransferProgress) => void): Promise<UnlistenFn> {

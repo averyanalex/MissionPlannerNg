@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 mavlink = "0.17"
+mp-mission-core = { path = "../mp-mission-core" }
+num-traits = "0.2"
 serde = { version = "1", features = ["derive"] }
 serialport = { version = "4.8.1", default-features = false }
 uuid = { version = "1", features = ["v4", "serde"] }

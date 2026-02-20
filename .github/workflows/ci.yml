@@ -38,3 +38,6 @@ jobs:
 
       - name: Cargo check
         run: cargo check --workspace
+
+      - name: Cargo test
+        run: cargo test --workspace

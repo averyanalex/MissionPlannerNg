@@ -1819,6 +1819,8 @@ name = "mp-telemetry-core"
 version = "0.1.0"
 dependencies = [
  "mavlink",
+ "mp-mission-core",
+ "num-traits",
  "serde",
  "serialport",
  "uuid",
