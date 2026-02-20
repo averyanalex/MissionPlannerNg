@@ -112,7 +112,7 @@ You should then see telemetry and mission workflows available (Read/Write/Verify
 ### 4) (Optional) Run SITL roundtrip integration tests
 
 ```bash
-MP_SITL_UDP_BIND=0.0.0.0:14550 cargo test -p mp-telemetry-core sitl_roundtrip -- --ignored --nocapture --test-threads=1
+MP_SITL_UDP_BIND=0.0.0.0:14550 cargo test -p mp-telemetry-core --test sitl_roundtrip -- --ignored --nocapture --test-threads=1
 ```
 
 ### 5) Cleanup

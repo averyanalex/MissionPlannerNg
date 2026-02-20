@@ -90,7 +90,10 @@ fn run_roundtrip_case(plan: MissionPlan) {
         };
 
         let expected = normalize_for_compare(&plan);
-        let got = normalize_for_compare(&downloaded);
+        let got = normalize_for_compare(&strip_home_placeholder_for_compare(
+            plan.mission_type,
+            downloaded,
+        ));
         if !plans_equivalent(&expected, &got, CompareTolerance::default()) {
             return Err(format!(
                 "readback mismatch for {:?}: expected {:?}, got {:?}",
@@ -221,6 +224,32 @@ fn mission_download_with_retries(
         }
         Err(err)
     })
+}
+
+fn strip_home_placeholder_for_compare(
+    mission_type: MissionType,
+    mut plan: MissionPlan,
+) -> MissionPlan {
+    if mission_type == MissionType::Mission && plan.items.len() > 1 {
+        let remove = plan.items.first().is_some_and(|item| {
+            item.seq == 0
+                && item.command == 16
+                && item.frame == MissionFrame::GlobalInt
+                && !item.current
+        });
+
+        if remove {
+            plan.items.remove(0);
+            for (index, item) in plan.items.iter_mut().enumerate() {
+                item.seq = index as u16;
+                if index == 0 {
+                    item.current = true;
+                }
+            }
+        }
+    }
+
+    plan
 }
 
 fn sample_plan_mission(mission_type: MissionType) -> MissionPlan {

@@ -779,8 +779,6 @@ fn mission_download_internal(
     machine.on_ack_success();
     emit_mission_progress(event_tx, machine.progress());
 
-    let items = canonicalize_downloaded_items(mission_type, items);
-
     Ok(MissionPlan {
         mission_type,
         items,
@@ -921,7 +919,7 @@ fn send_requested_item(
             target_system: target.system_id,
             target_component: target.component_id,
             frame,
-            current: u8::from(item.current),
+            current: 0,
             autocontinue: u8::from(item.autocontinue),
             mission_type: to_mav_mission_type(mission_type),
         }),
@@ -1150,35 +1148,6 @@ fn is_matching_mission_item(
         }
         _ => false,
     }
-}
-
-fn canonicalize_downloaded_items(
-    mission_type: MissionType,
-    mut items: Vec<MissionItem>,
-) -> Vec<MissionItem> {
-    if mission_type == MissionType::Mission && items.len() > 1 {
-        let has_relative_frames = items
-            .iter()
-            .skip(1)
-            .any(|item| item.frame == MissionFrame::GlobalRelativeAltInt);
-        let is_home_placeholder = items.first().is_some_and(|item| {
-            item.seq == 0
-                && item.command == common::MavCmd::MAV_CMD_NAV_WAYPOINT as u16
-                && item.frame == MissionFrame::GlobalInt
-                && !item.current
-                && has_relative_frames
-        });
-
-        if is_home_placeholder {
-            items.remove(0);
-            for (index, item) in items.iter_mut().enumerate() {
-                item.seq = index as u16;
-                item.current = index == 0;
-            }
-        }
-    }
-
-    items
 }
 
 fn from_mav_frame(frame: common::MavFrame) -> MissionFrame {
@@ -1434,32 +1403,6 @@ mod tests {
             x: 473_977_420,
             y: 85_455_970,
             z: 30.0,
-            seq,
-            command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
-            target_system: 255,
-            target_component: 190,
-            frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT,
-            current: 0,
-            autocontinue: 1,
-            mission_type: to_mav_mission_type(mission_type),
-        })
-    }
-
-    fn mission_item_int_with_coords(
-        seq: u16,
-        mission_type: MissionType,
-        x: i32,
-        y: i32,
-        z: f32,
-    ) -> common::MavMessage {
-        common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
-            param1: 0.0,
-            param2: 0.0,
-            param3: 0.0,
-            param4: 0.0,
-            x,
-            y,
-            z,
             seq,
             command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
             target_system: 255,
@@ -1732,56 +1675,5 @@ mod tests {
         assert_eq!(mission_states.len(), 1);
         assert_eq!(mission_states[0].current_seq, 2);
         assert_eq!(mission_states[0].total_items, 5);
-    }
-
-    #[test]
-    fn download_canonicalizes_home_placeholder_item() {
-        let messages = vec![
-            common::MavMessage::MISSION_COUNT(common::MISSION_COUNT_DATA {
-                count: 3,
-                target_system: 255,
-                target_component: 190,
-                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
-                opaque_id: 0,
-            }),
-            common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
-                param1: 0.0,
-                param2: 0.0,
-                param3: 0.0,
-                param4: 0.0,
-                x: 423_898_000,
-                y: -711_476_000,
-                z: 14.09,
-                seq: 0,
-                command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
-                target_system: 255,
-                target_component: 190,
-                frame: common::MavFrame::MAV_FRAME_GLOBAL,
-                current: 0,
-                autocontinue: 1,
-                mission_type: to_mav_mission_type(MissionType::Mission),
-            }),
-            mission_item_int_with_coords(1, MissionType::Mission, 473_981_000, 85_460_999, 30.0),
-            mission_item_int_with_coords(2, MissionType::Mission, 473_984_499, 85_465_000, 28.0),
-        ];
-        let mut connection = MockConnection::new(messages);
-        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
-        let (event_tx, _event_rx) = mpsc::channel();
-
-        let downloaded = mission_download_internal(
-            "session-1",
-            &event_tx,
-            &mut connection,
-            &mut aggregate,
-            &mut vehicle_target,
-            &stop_flag,
-            MissionType::Mission,
-        )
-        .expect("download should succeed");
-
-        assert_eq!(downloaded.items.len(), 2);
-        assert_eq!(downloaded.items[0].seq, 0);
-        assert_eq!(downloaded.items[0].x, 473_981_000);
-        assert!(downloaded.items[0].current);
     }
 }
