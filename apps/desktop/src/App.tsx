@@ -1,9 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  simulateMissionClear,
+  simulateMissionDownload,
+  simulateMissionUpload,
+  subscribeMissionError,
+  subscribeMissionProgress,
   validateMissionPlan,
+  verifyMissionRoundtrip,
   type MissionIssue,
   type MissionItem,
-  type MissionPlan
+  type MissionPlan,
+  type MissionType,
+  type TransferError,
+  type TransferProgress
 } from "./mission";
 import {
   connectLink,
@@ -41,6 +50,10 @@ export default function App() {
     createWaypoint(1, 47.3984, 8.5461, 30)
   ]);
   const [missionIssues, setMissionIssues] = useState<MissionIssue[]>([]);
+  const [missionType, setMissionType] = useState<MissionType>("mission");
+  const [roundtripStatus, setRoundtripStatus] = useState<string>("Not checked");
+  const [missionProgress, setMissionProgress] = useState<TransferProgress | null>(null);
+  const [missionTransferError, setMissionTransferError] = useState<TransferError | null>(null);
   const browserMockTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -77,6 +90,25 @@ export default function App() {
       stopBrowserMock();
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    let stopProgress: (() => void) | null = null;
+    let stopError: (() => void) | null = null;
+
+    (async () => {
+      stopProgress = await subscribeMissionProgress(setMissionProgress);
+      stopError = await subscribeMissionError(setMissionTransferError);
+    })();
+
+    return () => {
+      if (stopProgress) {
+        stopProgress();
+      }
+      if (stopError) {
+        stopError();
+      }
+    };
+  }, []);
 
   async function refreshSerialPorts() {
     try {
@@ -131,13 +163,65 @@ export default function App() {
   async function handleValidateMission() {
     setError(null);
     const plan: MissionPlan = {
-      mission_type: "mission",
+      mission_type: missionType,
       items: missionItems
     };
 
     try {
       const issues = await validateMissionPlan(plan);
       setMissionIssues(issues);
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleSimulateMissionUpload() {
+    setMissionTransferError(null);
+    const plan: MissionPlan = {
+      mission_type: missionType,
+      items: missionItems
+    };
+
+    try {
+      await simulateMissionUpload(plan);
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleSimulateMissionDownload() {
+    setMissionTransferError(null);
+    try {
+      const downloaded = await simulateMissionDownload(missionType);
+      setMissionItems(resequence(downloaded.items));
+      setMissionIssues([]);
+      setRoundtripStatus("Downloaded sample plan");
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleSimulateMissionClear() {
+    setMissionTransferError(null);
+    try {
+      await simulateMissionClear(missionType);
+      setMissionItems([]);
+      setMissionIssues([]);
+      setRoundtripStatus("Cleared");
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleVerifyRoundtrip() {
+    const plan: MissionPlan = {
+      mission_type: missionType,
+      items: missionItems
+    };
+
+    try {
+      const ok = await verifyMissionRoundtrip(plan);
+      setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -237,7 +321,7 @@ export default function App() {
           <div className="connect-box">
             <div className="row">
               <label>Mode</label>
-              <select value={mode} onChange={(event) => setMode(event.target.value as "udp" | "serial")}> 
+              <select value={mode} onChange={(event) => setMode(event.target.value as "udp" | "serial")}>
                 <option value="udp">UDP</option>
                 <option value="serial">Serial</option>
               </select>
@@ -327,6 +411,22 @@ export default function App() {
                   Remove Last
                 </button>
                 <button onClick={handleValidateMission}>Validate Plan</button>
+                <button onClick={handleSimulateMissionUpload}>Write</button>
+                <button onClick={handleSimulateMissionDownload}>Read</button>
+                <button onClick={handleVerifyRoundtrip}>Verify</button>
+                <button className="secondary" onClick={handleSimulateMissionClear}>
+                  Clear
+                </button>
+              </div>
+
+              <div className="planner-actions">
+                <label className="inline-label">Type</label>
+                <select value={missionType} onChange={(event) => setMissionType(event.target.value as MissionType)}>
+                  <option value="mission">Mission</option>
+                  <option value="fence">Fence</option>
+                  <option value="rally">Rally</option>
+                </select>
+                <span className="roundtrip-status">{roundtripStatus}</span>
               </div>
 
               <div className="mission-table-wrap">
@@ -410,6 +510,23 @@ export default function App() {
                     ))}
                   </ul>
                 )}
+              </div>
+
+              <div className="mission-transfer">
+                <h4>Transfer Status</h4>
+                {missionProgress ? (
+                  <p>
+                    {missionProgress.phase} - {missionProgress.completed_items}/{missionProgress.total_items} items
+                    (retries: {missionProgress.retries_used})
+                  </p>
+                ) : (
+                  <p>No transfer yet.</p>
+                )}
+                {missionTransferError ? (
+                  <p className="error-inline">
+                    {missionTransferError.code}: {missionTransferError.message}
+                  </p>
+                ) : null}
               </div>
             </div>
           )}

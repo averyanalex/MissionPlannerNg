@@ -201,6 +201,24 @@ body,
   padding: 6px 10px;
 }
 
+.planner-actions select {
+  border: 1px solid #3a5068;
+  border-radius: 4px;
+  background: #162332;
+  color: #d7e6f6;
+  padding: 6px 10px;
+}
+
+.inline-label {
+  color: #a9bfd4;
+  align-self: center;
+}
+
+.roundtrip-status {
+  color: #99b7d4;
+  align-self: center;
+}
+
 .mission-table-wrap {
   overflow: auto;
 }
@@ -244,6 +262,24 @@ body,
 .mission-issues ul {
   margin: 0;
   padding-left: 16px;
+}
+
+.mission-transfer {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #2f4358;
+  border-radius: 6px;
+  background: #13202d;
+  color: #b3c8dd;
+}
+
+.mission-transfer h4 {
+  margin: 0 0 8px;
+}
+
+.error-inline {
+  color: #ff9f9f;
+  margin: 6px 0 0;
 }
 
 @media (max-width: 900px) {
