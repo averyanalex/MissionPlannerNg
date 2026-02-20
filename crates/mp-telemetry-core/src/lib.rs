@@ -382,6 +382,7 @@ fn mission_upload_internal(
 
     let mut machine = MissionTransferMachine::new_upload(&plan, RetryPolicy::default());
     emit_mission_progress(event_tx, machine.progress());
+    let mav_mission_type = to_mav_mission_type(plan.mission_type);
 
     let send_count = |connection: &mut dyn MavConnection<common::MavMessage>| {
         send_message(
@@ -390,6 +391,8 @@ fn mission_upload_internal(
                 count: plan.items.len() as u16,
                 target_system: target.system_id,
                 target_component: target.component_id,
+                mission_type: mav_mission_type,
+                opaque_id: 0,
             }),
         )
     };
@@ -405,6 +408,7 @@ fn mission_upload_internal(
                 aggregate,
                 vehicle_target,
                 stop_flag,
+                plan.mission_type,
                 machine.timeout_ms(),
             ) {
                 Ok(()) => {
@@ -455,20 +459,29 @@ fn mission_upload_internal(
 
         match message {
             common::MavMessage::MISSION_REQUEST_INT(data) => {
-                send_requested_item(connection, &plan, target, data.seq)?;
+                if data.mission_type != mav_mission_type {
+                    continue;
+                }
+                send_requested_item(connection, &plan, target, plan.mission_type, data.seq)?;
                 if acknowledged.insert(data.seq) {
                     machine.on_item_transferred();
                     emit_mission_progress(event_tx, machine.progress());
                 }
             }
             common::MavMessage::MISSION_REQUEST(data) => {
-                send_requested_item(connection, &plan, target, data.seq)?;
+                if data.mission_type != mav_mission_type {
+                    continue;
+                }
+                send_requested_item(connection, &plan, target, plan.mission_type, data.seq)?;
                 if acknowledged.insert(data.seq) {
                     machine.on_item_transferred();
                     emit_mission_progress(event_tx, machine.progress());
                 }
             }
             common::MavMessage::MISSION_ACK(data) => {
+                if data.mission_type != mav_mission_type {
+                    continue;
+                }
                 if data.mavtype == common::MavMissionResult::MAV_MISSION_ACCEPTED {
                     machine.on_ack_success();
                     emit_mission_progress(event_tx, machine.progress());
@@ -492,6 +505,7 @@ fn mission_upload_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            plan.mission_type,
             machine.timeout_ms(),
         ) {
             Ok(()) => {
@@ -525,6 +539,7 @@ fn mission_download_internal(
 
     let mut machine = MissionTransferMachine::new_download(mission_type, RetryPolicy::default());
     emit_mission_progress(event_tx, machine.progress());
+    let mav_mission_type = to_mav_mission_type(mission_type);
 
     let send_request_list = |connection: &mut dyn MavConnection<common::MavMessage>| {
         send_message(
@@ -532,6 +547,7 @@ fn mission_download_internal(
             common::MavMessage::MISSION_REQUEST_LIST(common::MISSION_REQUEST_LIST_DATA {
                 target_system: target.system_id,
                 target_component: target.component_id,
+                mission_type: mav_mission_type,
             }),
         )
     };
@@ -547,7 +563,12 @@ fn mission_download_internal(
             vehicle_target,
             stop_flag,
             Duration::from_millis(machine.timeout_ms()),
-            |msg| matches!(msg, common::MavMessage::MISSION_COUNT(_)),
+            |msg| {
+                matches!(
+                    msg,
+                    common::MavMessage::MISSION_COUNT(data) if data.mission_type == mav_mission_type
+                )
+            },
         ) {
             Ok(message) => break message,
             Err(err) if err == MISSION_TIMEOUT_ERROR => {
@@ -576,6 +597,7 @@ fn mission_download_internal(
                     seq,
                     target_system: target.system_id,
                     target_component: target.component_id,
+                    mission_type: mav_mission_type,
                 }),
             )
         };
@@ -591,7 +613,13 @@ fn mission_download_internal(
                 vehicle_target,
                 stop_flag,
                 Duration::from_millis(machine.timeout_ms()),
-                |msg| matches!(msg, common::MavMessage::MISSION_ITEM_INT(data) if data.seq == seq),
+                |msg| {
+                    matches!(
+                        msg,
+                        common::MavMessage::MISSION_ITEM_INT(data)
+                            if data.seq == seq && data.mission_type == mav_mission_type
+                    )
+                },
             ) {
                 Ok(message) => break message,
                 Err(err) if err == MISSION_TIMEOUT_ERROR => {
@@ -618,6 +646,7 @@ fn mission_download_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            mission_type,
             machine.timeout_ms(),
         ) {
             Ok(()) => {
@@ -638,6 +667,7 @@ fn mission_download_internal(
                             seq: last_seq,
                             target_system: target.system_id,
                             target_component: target.component_id,
+                            mission_type: mav_mission_type,
                         }),
                     )?;
                 }
@@ -674,6 +704,7 @@ fn mission_clear_internal(
         RetryPolicy::default(),
     );
     emit_mission_progress(event_tx, machine.progress());
+    let mav_mission_type = to_mav_mission_type(mission_type);
 
     let send_clear = |connection: &mut dyn MavConnection<common::MavMessage>| {
         send_message(
@@ -681,6 +712,7 @@ fn mission_clear_internal(
             common::MavMessage::MISSION_CLEAR_ALL(common::MISSION_CLEAR_ALL_DATA {
                 target_system: target.system_id,
                 target_component: target.component_id,
+                mission_type: mav_mission_type,
             }),
         )
     };
@@ -695,6 +727,7 @@ fn mission_clear_internal(
             aggregate,
             vehicle_target,
             stop_flag,
+            mission_type,
             RetryPolicy::default().request_timeout_ms,
         ) {
             Ok(()) => {
@@ -719,8 +752,10 @@ fn wait_for_ack(
     aggregate: &mut TelemetryAggregate,
     vehicle_target: &mut Option<VehicleTarget>,
     stop_flag: &Arc<AtomicBool>,
+    mission_type: MissionType,
     timeout_ms: u64,
 ) -> Result<(), String> {
+    let mav_mission_type = to_mav_mission_type(mission_type);
     let message = wait_for_message(
         session_id,
         event_tx,
@@ -733,6 +768,9 @@ fn wait_for_ack(
     )?;
 
     if let common::MavMessage::MISSION_ACK(data) = message {
+        if data.mission_type != mav_mission_type {
+            return Err(String::from("mission ack type mismatch"));
+        }
         if data.mavtype == common::MavMissionResult::MAV_MISSION_ACCEPTED {
             return Ok(());
         }
@@ -751,6 +789,7 @@ fn send_requested_item(
     connection: &mut impl MavConnection<common::MavMessage>,
     plan: &MissionPlan,
     target: VehicleTarget,
+    mission_type: MissionType,
     seq: u16,
 ) -> Result<(), String> {
     let item = plan
@@ -779,6 +818,7 @@ fn send_requested_item(
             frame,
             current: u8::from(item.current),
             autocontinue: u8::from(item.autocontinue),
+            mission_type: to_mav_mission_type(mission_type),
         }),
     )
 }
@@ -935,6 +975,14 @@ fn from_mav_frame(frame: common::MavFrame) -> MissionFrame {
         common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT_INT => MissionFrame::GlobalTerrainAltInt,
         common::MavFrame::MAV_FRAME_LOCAL_NED => MissionFrame::LocalNed,
         _ => MissionFrame::Other,
+    }
+}
+
+fn to_mav_mission_type(mission_type: MissionType) -> common::MavMissionType {
+    match mission_type {
+        MissionType::Mission => common::MavMissionType::MAV_MISSION_TYPE_MISSION,
+        MissionType::Fence => common::MavMissionType::MAV_MISSION_TYPE_FENCE,
+        MissionType::Rally => common::MavMissionType::MAV_MISSION_TYPE_RALLY,
     }
 }
 
@@ -1149,15 +1197,17 @@ mod tests {
         }
     }
 
-    fn accepted_ack() -> common::MavMessage {
+    fn accepted_ack(mission_type: MissionType) -> common::MavMessage {
         common::MavMessage::MISSION_ACK(common::MISSION_ACK_DATA {
             target_system: 255,
             target_component: 190,
             mavtype: common::MavMissionResult::MAV_MISSION_ACCEPTED,
+            mission_type: to_mav_mission_type(mission_type),
+            opaque_id: 0,
         })
     }
 
-    fn mission_item_int(seq: u16) -> common::MavMessage {
+    fn mission_item_int(seq: u16, mission_type: MissionType) -> common::MavMessage {
         common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
             param1: 0.0,
             param2: 0.0,
@@ -1173,6 +1223,7 @@ mod tests {
             frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
             current: 0,
             autocontinue: 1,
+            mission_type: to_mav_mission_type(mission_type),
         })
     }
 
@@ -1194,18 +1245,21 @@ mod tests {
                 seq: 0,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
             }),
             common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
                 seq: 0,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
             }),
             common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
                 seq: 1,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
             }),
-            accepted_ack(),
+            accepted_ack(MissionType::Mission),
         ];
         let mut connection = MockConnection::new(messages);
         let plan = MissionPlan {
@@ -1257,10 +1311,12 @@ mod tests {
                 count: 2,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
+                opaque_id: 0,
             }),
-            mission_item_int(0),
-            mission_item_int(1),
-            accepted_ack(),
+            mission_item_int(0, MissionType::Mission),
+            mission_item_int(1, MissionType::Mission),
+            accepted_ack(MissionType::Mission),
         ];
         let mut connection = MockConnection::new(messages);
         let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
@@ -1293,7 +1349,7 @@ mod tests {
 
     #[test]
     fn clear_success_sends_clear_all() {
-        let mut connection = MockConnection::new(vec![accepted_ack()]);
+        let mut connection = MockConnection::new(vec![accepted_ack(MissionType::Mission)]);
         let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
         let (event_tx, _event_rx) = mpsc::channel();
 
@@ -1321,9 +1377,11 @@ mod tests {
                 count: 1,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_FENCE,
+                opaque_id: 0,
             }),
-            mission_item_int(0),
-            accepted_ack(),
+            mission_item_int(0, MissionType::Fence),
+            accepted_ack(MissionType::Fence),
         ];
         let mut connection = MockConnection::new(messages);
         let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
@@ -1351,6 +1409,8 @@ mod tests {
                 count: 1,
                 target_system: 255,
                 target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
+                opaque_id: 0,
             },
         )]);
         let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
