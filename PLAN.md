@@ -199,7 +199,7 @@ Assumption: small focused team (4-6 engineers). Timeline can compress/expand bas
 Current status:
 - M0: complete
 - M1: complete
-- M2: active (MapLibre planner + map/table sync + mission state wiring complete; SITL automation and acceptance loop remain)
+- M2: active (MapLibre 3D planner + map/table sync + mission state wiring complete; SITL roundtrip harness in place, full acceptance loop remains)
 
 ## M0 - Foundation (Weeks 1-4) [COMPLETE]
 - Finalize architecture and ADRs
@@ -261,7 +261,7 @@ M2 workstreams:
      - `mission.error`
 
 4. Frontend mission planning surface
-   - Status: active (MapLibre panel + map/table selection sync + row operations + transfer actions in place)
+   - Status: active (MapLibre 3D terrain panel + map/table selection sync + row operations + transfer actions in place)
    - Add MapLibre-based mission map panel with click-to-add waypoint
    - Add mission table with inline edit (command, lat/lon, altitude, hold/speed where applicable)
    - Add row operations: add/delete/reorder and map-table two-way sync
@@ -269,7 +269,7 @@ M2 workstreams:
    - Show transfer progress/error status inline
 
 5. SITL + regression automation
-   - Status: next
+   - Status: active (nightly/manual SITL workflow added; roundtrip suite scaffolded for `MISSION`, `FENCE`, `RALLY`)
    - Add integration tests for upload/download with retries and packet delay simulation
    - Add roundtrip verification fixture: edit mission -> upload -> download -> compare normalized plan
    - Add smoke tests for `MISSION`, `FENCE`, and `RALLY` types
@@ -372,10 +372,10 @@ Exit criteria:
 
 ## 11) Immediate Next Steps (Current - M2 Execution)
 
-1. Add SITL mission roundtrip integration suite covering `MISSION`, `FENCE`, and `RALLY`
-2. Extend CI with a SITL mission job (or staged/nightly gate) while keeping fast per-PR checks
-3. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
-4. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
-5. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)
+1. Stabilize SITL roundtrip suite: non-empty `FENCE`/`RALLY` fixtures and retry/delay simulation coverage
+2. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
+3. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
+4. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)
+5. Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable
 
 This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.
