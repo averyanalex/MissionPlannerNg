@@ -64,7 +64,9 @@ jobs:
                   log = open('/tmp/mavproxy.log', 'w', encoding='utf-8')
                   proc = subprocess.Popen([
                       'uvx', '--from', 'mavproxy', '--with', 'future', '--python', '3.11',
-                      'mavproxy.py', '--master=tcp:127.0.0.1:5760', '--out=udp:127.0.0.1:14550'
+                      'mavproxy.py', '--master=tcp:127.0.0.1:5760', '--out=udp:127.0.0.1:14550',
+                      '--daemon', '--non-interactive',
+                      '--default-modules=link,signing,log,wp,rally,fence,param,relay,tuneopt,arm,mode,calibration,rc,auxopt,misc,cmdlong,battery,terrain,output,layout'
                   ], stdout=log, stderr=subprocess.STDOUT)
                   open('/tmp/mavproxy.pid', 'w', encoding='utf-8').write(str(proc.pid))
 
@@ -105,7 +107,7 @@ jobs:
       - name: Run SITL roundtrip suite
         env:
           MP_SITL_UDP_BIND: 0.0.0.0:14550
-        run: cargo test -p mp-telemetry-core sitl_roundtrip -- --ignored --nocapture
+        run: cargo test -p mp-telemetry-core sitl_roundtrip -- --ignored --nocapture --test-threads=1
 
       - name: Dump bridge logs on failure
         if: failure()

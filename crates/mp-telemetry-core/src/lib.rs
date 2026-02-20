@@ -670,14 +670,14 @@ fn mission_download_internal(
             vehicle_target,
             stop_flag,
             Duration::from_millis(machine.timeout_ms()),
-            |msg| {
-                matches!(
-                    msg,
-                    common::MavMessage::MISSION_COUNT(data) if data.mission_type == mav_mission_type
-                )
-            },
+            |msg| matches!(msg, common::MavMessage::MISSION_COUNT(_)),
         ) {
-            Ok(message) => break message,
+            Ok(common::MavMessage::MISSION_COUNT(data)) => {
+                if mission_type_matches(data.mission_type, mission_type) {
+                    break common::MavMessage::MISSION_COUNT(data);
+                }
+            }
+            Ok(_) => {}
             Err(err) if err == MISSION_TIMEOUT_ERROR => {
                 machine_on_timeout(&mut machine, event_tx)?;
                 emit_mission_progress(event_tx, machine.progress());
@@ -697,19 +697,34 @@ fn mission_download_internal(
 
     let mut items = Vec::with_capacity(count as usize);
     for seq in 0..count {
-        let send_request_item = |connection: &mut dyn MavConnection<common::MavMessage>| {
-            send_message(
-                connection,
-                common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
-                    seq,
-                    target_system: target.system_id,
-                    target_component: target.component_id,
-                    mission_type: mav_mission_type,
-                }),
-            )
+        let mut use_int_request = true;
+
+        let send_request_item = |connection: &mut dyn MavConnection<common::MavMessage>,
+                                 use_int: bool| {
+            if use_int {
+                send_message(
+                    connection,
+                    common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
+                        seq,
+                        target_system: target.system_id,
+                        target_component: target.component_id,
+                        mission_type: mav_mission_type,
+                    }),
+                )
+            } else {
+                send_message(
+                    connection,
+                    common::MavMessage::MISSION_REQUEST(common::MISSION_REQUEST_DATA {
+                        seq,
+                        target_system: target.system_id,
+                        target_component: target.component_id,
+                        mission_type: mav_mission_type,
+                    }),
+                )
+            }
         };
 
-        send_request_item(connection)?;
+        send_request_item(connection, use_int_request)?;
 
         let item_message = loop {
             match wait_for_message(
@@ -720,68 +735,51 @@ fn mission_download_internal(
                 vehicle_target,
                 stop_flag,
                 Duration::from_millis(machine.timeout_ms()),
-                |msg| {
-                    matches!(
-                        msg,
-                        common::MavMessage::MISSION_ITEM_INT(data)
-                            if data.seq == seq && data.mission_type == mav_mission_type
-                    )
-                },
+                |msg| is_matching_mission_item(msg, seq, mission_type),
             ) {
                 Ok(message) => break message,
                 Err(err) if err == MISSION_TIMEOUT_ERROR => {
                     machine_on_timeout(&mut machine, event_tx)?;
                     emit_mission_progress(event_tx, machine.progress());
-                    send_request_item(connection)?;
+                    if use_int_request {
+                        use_int_request = false;
+                    }
+                    send_request_item(connection, use_int_request)?;
                 }
                 Err(err) => return Err(err),
             }
         };
 
-        if let common::MavMessage::MISSION_ITEM_INT(data) = item_message {
-            items.push(from_mission_item_data(data));
-            machine.on_item_transferred();
-            emit_mission_progress(event_tx, machine.progress());
+        match item_message {
+            common::MavMessage::MISSION_ITEM_INT(data) => {
+                items.push(from_mission_item_data(data));
+                machine.on_item_transferred();
+                emit_mission_progress(event_tx, machine.progress());
+            }
+            common::MavMessage::MISSION_ITEM(data) => {
+                items.push(from_mission_item_float_data(data));
+                machine.on_item_transferred();
+                emit_mission_progress(event_tx, machine.progress());
+            }
+            _ => {}
         }
     }
 
-    loop {
-        match wait_for_ack(
-            session_id,
-            event_tx,
-            connection,
-            aggregate,
-            vehicle_target,
-            stop_flag,
-            mission_type,
-            machine.timeout_ms(),
-        ) {
-            Ok(()) => {
-                machine.on_ack_success();
-                emit_mission_progress(event_tx, machine.progress());
-                break;
-            }
-            Err(err) if err == MISSION_TIMEOUT_ERROR => {
-                machine_on_timeout(&mut machine, event_tx)?;
-                emit_mission_progress(event_tx, machine.progress());
-                if count == 0 {
-                    send_request_list(connection)?;
-                } else {
-                    let last_seq = count - 1;
-                    send_message(
-                        connection,
-                        common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
-                            seq: last_seq,
-                            target_system: target.system_id,
-                            target_component: target.component_id,
-                            mission_type: mav_mission_type,
-                        }),
-                    )?;
-                }
-            }
-            Err(err) => return Err(err),
-        }
-    }
+    let _ = send_message(
+        connection,
+        common::MavMessage::MISSION_ACK(common::MISSION_ACK_DATA {
+            target_system: target.system_id,
+            target_component: target.component_id,
+            mavtype: common::MavMissionResult::MAV_MISSION_ACCEPTED,
+            mission_type: mav_mission_type,
+            opaque_id: 0,
+        }),
+    );
+
+    machine.on_ack_success();
+    emit_mission_progress(event_tx, machine.progress());
+
+    let items = canonicalize_downloaded_items(mission_type, items);
 
     Ok(MissionPlan {
         mission_type,
@@ -1069,9 +1067,9 @@ fn update_vehicle_target(
 fn to_mav_frame(frame: MissionFrame) -> common::MavFrame {
     match frame {
         MissionFrame::Mission => common::MavFrame::MAV_FRAME_MISSION,
-        MissionFrame::GlobalInt => common::MavFrame::MAV_FRAME_GLOBAL_INT,
-        MissionFrame::GlobalRelativeAltInt => common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
-        MissionFrame::GlobalTerrainAltInt => common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT_INT,
+        MissionFrame::GlobalInt => common::MavFrame::MAV_FRAME_GLOBAL,
+        MissionFrame::GlobalRelativeAltInt => common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT,
+        MissionFrame::GlobalTerrainAltInt => common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT,
         MissionFrame::LocalNed => common::MavFrame::MAV_FRAME_LOCAL_NED,
         MissionFrame::Other => common::MavFrame::MAV_FRAME_MISSION,
     }
@@ -1094,12 +1092,105 @@ fn from_mission_item_data(data: common::MISSION_ITEM_INT_DATA) -> MissionItem {
     }
 }
 
+fn from_mission_item_float_data(data: common::MISSION_ITEM_DATA) -> MissionItem {
+    let is_global = matches!(
+        data.frame,
+        common::MavFrame::MAV_FRAME_GLOBAL
+            | common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT
+            | common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT
+            | common::MavFrame::MAV_FRAME_GLOBAL_INT
+            | common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT
+            | common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT_INT
+    );
+
+    MissionItem {
+        seq: data.seq,
+        command: data.command as u16,
+        frame: from_mav_frame(data.frame),
+        current: data.current > 0,
+        autocontinue: data.autocontinue > 0,
+        param1: data.param1,
+        param2: data.param2,
+        param3: data.param3,
+        param4: data.param4,
+        x: if is_global {
+            (data.x as f64 * 1e7) as i32
+        } else {
+            data.x as i32
+        },
+        y: if is_global {
+            (data.y as f64 * 1e7) as i32
+        } else {
+            data.y as i32
+        },
+        z: data.z,
+    }
+}
+
+fn mission_type_matches(received: common::MavMissionType, expected: MissionType) -> bool {
+    let expected_mav = to_mav_mission_type(expected);
+    if expected == MissionType::Mission {
+        received == expected_mav || received == common::MavMissionType::MAV_MISSION_TYPE_MISSION
+    } else {
+        received == expected_mav
+    }
+}
+
+fn is_matching_mission_item(
+    message: &common::MavMessage,
+    seq: u16,
+    mission_type: MissionType,
+) -> bool {
+    match message {
+        common::MavMessage::MISSION_ITEM_INT(data) => {
+            data.seq == seq && mission_type_matches(data.mission_type, mission_type)
+        }
+        common::MavMessage::MISSION_ITEM(data) => {
+            data.seq == seq && mission_type_matches(data.mission_type, mission_type)
+        }
+        _ => false,
+    }
+}
+
+fn canonicalize_downloaded_items(
+    mission_type: MissionType,
+    mut items: Vec<MissionItem>,
+) -> Vec<MissionItem> {
+    if mission_type == MissionType::Mission && items.len() > 1 {
+        let has_relative_frames = items
+            .iter()
+            .skip(1)
+            .any(|item| item.frame == MissionFrame::GlobalRelativeAltInt);
+        let is_home_placeholder = items.first().is_some_and(|item| {
+            item.seq == 0
+                && item.command == common::MavCmd::MAV_CMD_NAV_WAYPOINT as u16
+                && item.frame == MissionFrame::GlobalInt
+                && !item.current
+                && has_relative_frames
+        });
+
+        if is_home_placeholder {
+            items.remove(0);
+            for (index, item) in items.iter_mut().enumerate() {
+                item.seq = index as u16;
+                item.current = index == 0;
+            }
+        }
+    }
+
+    items
+}
+
 fn from_mav_frame(frame: common::MavFrame) -> MissionFrame {
     match frame {
         common::MavFrame::MAV_FRAME_MISSION => MissionFrame::Mission,
-        common::MavFrame::MAV_FRAME_GLOBAL_INT => MissionFrame::GlobalInt,
-        common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT => MissionFrame::GlobalRelativeAltInt,
-        common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT_INT => MissionFrame::GlobalTerrainAltInt,
+        common::MavFrame::MAV_FRAME_GLOBAL | common::MavFrame::MAV_FRAME_GLOBAL_INT => {
+            MissionFrame::GlobalInt
+        }
+        common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT
+        | common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT => MissionFrame::GlobalRelativeAltInt,
+        common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT
+        | common::MavFrame::MAV_FRAME_GLOBAL_TERRAIN_ALT_INT => MissionFrame::GlobalTerrainAltInt,
         common::MavFrame::MAV_FRAME_LOCAL_NED => MissionFrame::LocalNed,
         _ => MissionFrame::Other,
     }
@@ -1347,7 +1438,33 @@ mod tests {
             command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
             target_system: 255,
             target_component: 190,
-            frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT,
+            current: 0,
+            autocontinue: 1,
+            mission_type: to_mav_mission_type(mission_type),
+        })
+    }
+
+    fn mission_item_int_with_coords(
+        seq: u16,
+        mission_type: MissionType,
+        x: i32,
+        y: i32,
+        z: f32,
+    ) -> common::MavMessage {
+        common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
+            param1: 0.0,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            x,
+            y,
+            z,
+            seq,
+            command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
+            target_system: 255,
+            target_component: 190,
+            frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT,
             current: 0,
             autocontinue: 1,
             mission_type: to_mav_mission_type(mission_type),
@@ -1615,5 +1732,56 @@ mod tests {
         assert_eq!(mission_states.len(), 1);
         assert_eq!(mission_states[0].current_seq, 2);
         assert_eq!(mission_states[0].total_items, 5);
+    }
+
+    #[test]
+    fn download_canonicalizes_home_placeholder_item() {
+        let messages = vec![
+            common::MavMessage::MISSION_COUNT(common::MISSION_COUNT_DATA {
+                count: 3,
+                target_system: 255,
+                target_component: 190,
+                mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
+                opaque_id: 0,
+            }),
+            common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
+                param1: 0.0,
+                param2: 0.0,
+                param3: 0.0,
+                param4: 0.0,
+                x: 423_898_000,
+                y: -711_476_000,
+                z: 14.09,
+                seq: 0,
+                command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
+                target_system: 255,
+                target_component: 190,
+                frame: common::MavFrame::MAV_FRAME_GLOBAL,
+                current: 0,
+                autocontinue: 1,
+                mission_type: to_mav_mission_type(MissionType::Mission),
+            }),
+            mission_item_int_with_coords(1, MissionType::Mission, 473_981_000, 85_460_999, 30.0),
+            mission_item_int_with_coords(2, MissionType::Mission, 473_984_499, 85_465_000, 28.0),
+        ];
+        let mut connection = MockConnection::new(messages);
+        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (event_tx, _event_rx) = mpsc::channel();
+
+        let downloaded = mission_download_internal(
+            "session-1",
+            &event_tx,
+            &mut connection,
+            &mut aggregate,
+            &mut vehicle_target,
+            &stop_flag,
+            MissionType::Mission,
+        )
+        .expect("download should succeed");
+
+        assert_eq!(downloaded.items.len(), 2);
+        assert_eq!(downloaded.items[0].seq, 0);
+        assert_eq!(downloaded.items[0].x, 473_981_000);
+        assert!(downloaded.items[0].current);
     }
 }

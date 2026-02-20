@@ -241,7 +241,7 @@ M2 workstreams:
    - Add normalizers for upload/readback comparisons (float tolerance + frame normalization)
 
 2. MAVLink mission transfer engine
-   - Status: active (real transfer path implemented, mission namespaces wired on protocol messages, retry/timeout tests passing)
+   - Status: active (real transfer path implemented, mission namespaces wired on protocol messages, retry/timeout tests passing, legacy download compatibility in progress)
    - Upload flow: `MISSION_COUNT` -> (`MISSION_REQUEST_INT` or `MISSION_REQUEST`) -> `MISSION_ITEM_INT` -> `MISSION_ACK`
    - Download flow: `MISSION_REQUEST_LIST` -> `MISSION_COUNT` -> `MISSION_REQUEST_INT` loop -> `MISSION_ITEM_INT` loop -> `MISSION_ACK`
    - Support mission namespaces via `mission_type` (`MISSION`, `FENCE`, `RALLY`)
@@ -270,6 +270,7 @@ M2 workstreams:
 
 5. SITL + regression automation
    - Status: active (nightly/manual SITL workflow added; roundtrip suite scaffolded for `MISSION`, `FENCE`, `RALLY`)
+   - Current behavior: local SITL run is staged/non-strict by default (`--test-threads=1`) to avoid flaky false negatives on unsupported mission namespaces/timeouts; bridge startup now uses explicit daemonized MAVProxy defaults
    - Add integration tests for upload/download with retries and packet delay simulation
    - Add roundtrip verification fixture: edit mission -> upload -> download -> compare normalized plan
    - Add smoke tests for `MISSION`, `FENCE`, and `RALLY` types
@@ -372,7 +373,7 @@ Exit criteria:
 
 ## 11) Immediate Next Steps (Current - M2 Execution)
 
-1. Stabilize SITL roundtrip suite: non-empty `FENCE`/`RALLY` fixtures and retry/delay simulation coverage
+1. Stabilize SITL roundtrip suite: non-empty `FENCE`/`RALLY` fixtures, strict-mode mission assertions, and retry/delay simulation coverage
 2. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
 3. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
 4. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)

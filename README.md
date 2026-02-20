@@ -40,6 +40,42 @@ npm run tauri:dev
 
 This is the dev loop used by CI and local SITL testing.
 
+### Quick path with Makefile
+
+```bash
+make bridge-up
+make status
+make dev-sitl
+```
+
+Run staged integration tests:
+
+```bash
+make test-sitl
+```
+
+Run strict integration tests (fails on mission timeout/unsupported behavior):
+
+```bash
+make test-sitl-strict
+```
+
+Stop everything:
+
+```bash
+make bridge-down
+```
+
+`make dev-sitl` starts SITL + MAVProxy bridge, waits for UDP telemetry, then launches `npm run tauri:dev`.
+Wait logic uses checked-in Python helpers: `scripts/sitl_wait_tcp.py` and `scripts/sitl_wait_udp.py`.
+
+You can also inspect logs with:
+
+```bash
+make sitl-logs
+make mavproxy-logs
+```
+
 ### 1) Start SITL container
 
 ```bash
@@ -52,10 +88,12 @@ docker run -d --rm --name ardupilot-sitl -p 5760:5760 radarku/ardupilot-sitl
 ```bash
 uvx --from mavproxy --with future --python 3.11 mavproxy.py \
   --master=tcp:127.0.0.1:5760 \
-  --out=udp:127.0.0.1:14550
+  --out=udp:127.0.0.1:14550 \
+  --daemon --non-interactive \
+  --default-modules=link,signing,log,wp,rally,fence,param,relay,tuneopt,arm,mode,calibration,rc,auxopt,misc,cmdlong,battery,terrain,output,layout
 ```
 
-Keep this running in its own terminal.
+This uses SITL TCP `5760` (same baseline transport used by legacy Mission Planner SITL tooling) and forwards MAVLink to UDP `14550` for this app.
 
 ### 3) Launch the desktop app
 
@@ -74,7 +112,7 @@ You should then see telemetry and mission workflows available (Read/Write/Verify
 ### 4) (Optional) Run SITL roundtrip integration tests
 
 ```bash
-MP_SITL_UDP_BIND=0.0.0.0:14550 cargo test -p mp-telemetry-core sitl_roundtrip -- --ignored --nocapture
+MP_SITL_UDP_BIND=0.0.0.0:14550 cargo test -p mp-telemetry-core sitl_roundtrip -- --ignored --nocapture --test-threads=1
 ```
 
 ### 5) Cleanup
