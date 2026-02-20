@@ -179,7 +179,7 @@ export default function App() {
     setError(null);
     const plan: MissionPlan = {
       mission_type: missionType,
-      items: missionItems
+      items: missionItemsForTransfer(missionItems, missionType)
     };
 
     try {
@@ -198,7 +198,7 @@ export default function App() {
     }
     const plan: MissionPlan = {
       mission_type: missionType,
-      items: missionItems
+      items: missionItemsForTransfer(missionItems, missionType)
     };
 
     try {
@@ -216,7 +216,7 @@ export default function App() {
     }
     try {
       const downloaded = await downloadMissionPlan(sessionId, missionType);
-      setMissionItems(resequence(downloaded.items));
+      setMissionItems(downloaded.items);
       setSelectedMissionSeq(null);
       setMissionIssues([]);
       setRoundtripStatus("Downloaded sample plan");
@@ -249,7 +249,7 @@ export default function App() {
     }
     const plan: MissionPlan = {
       mission_type: missionType,
-      items: missionItems
+      items: missionItemsForTransfer(missionItems, missionType)
     };
 
     try {
@@ -279,6 +279,9 @@ export default function App() {
   }
 
   function updateMissionField(index: number, field: "command" | "z" | "param1" | "param2", value: number) {
+    if (isReadonlyHomeItem(missionItems[index], index, missionType)) {
+      return;
+    }
     setMissionItems((items) =>
       items.map((item, current) =>
         current === index
@@ -292,6 +295,9 @@ export default function App() {
   }
 
   function updateMissionCoordinate(index: number, field: "x" | "y", valueDeg: number) {
+    if (isReadonlyHomeItem(missionItems[index], index, missionType)) {
+      return;
+    }
     const encoded = Math.round(valueDeg * 1e7);
     setMissionItems((items) =>
       items.map((item, current) => (current === index ? { ...item, [field]: encoded } : item))
@@ -377,6 +383,9 @@ export default function App() {
   }
 
   function deleteWaypointAt(index: number) {
+    if (index === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)) {
+      return;
+    }
     setMissionItems((items) => {
       if (index < 0 || index >= items.length) {
         return items;
@@ -398,6 +407,12 @@ export default function App() {
 
   function moveWaypoint(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex) {
+      return;
+    }
+    if (
+      (fromIndex === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)) ||
+      (toIndex === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType))
+    ) {
       return;
     }
     setMissionItems((items) => {
@@ -579,6 +594,7 @@ export default function App() {
                 </button>
                 <button
                   className="secondary"
+                  disabled={selectedMissionSeq === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)}
                   onClick={() => deleteWaypointAt(selectedMissionSeq ?? missionItems.length - 1)}
                 >
                   Delete Selected
@@ -635,7 +651,7 @@ export default function App() {
 
               <div className="planner-workspace">
                 <MissionMap
-                  missionItems={missionItems}
+                  missionItems={missionItems.filter((item, index) => !isReadonlyHomeItem(item, index, missionType))}
                   selectedSeq={selectedMissionSeq}
                   onAddWaypoint={addWaypointAt}
                   onSelectSeq={setSelectedMissionSeq}
@@ -655,25 +671,32 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {missionItems.map((item, index) => (
+                      {missionItems.map((item, index) => {
+                        const isHome = isReadonlyHomeItem(item, index, missionType);
+                        return (
                         <tr
                           key={item.seq}
-                          className={selectedMissionSeq === item.seq ? "is-selected" : ""}
+                          className={`${selectedMissionSeq === item.seq ? "is-selected" : ""} ${isHome ? "is-home-row" : ""}`}
                           onClick={() => setSelectedMissionSeq(item.seq)}
                         >
                           <td>{item.seq}</td>
                           <td>
-                            <input
-                              type="number"
-                              value={item.command}
-                              onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
-                            />
+                            {isHome ? (
+                              <input type="text" value="HOME" readOnly />
+                            ) : (
+                              <input
+                                type="number"
+                                value={item.command}
+                                onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
+                              />
+                            )}
                           </td>
                           <td>
                             <input
                               type="number"
                               step="0.000001"
                               value={(item.x / 1e7).toFixed(6)}
+                              readOnly={isHome}
                               onChange={(event) => updateMissionCoordinate(index, "x", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -682,6 +705,7 @@ export default function App() {
                               type="number"
                               step="0.000001"
                               value={(item.y / 1e7).toFixed(6)}
+                              readOnly={isHome}
                               onChange={(event) => updateMissionCoordinate(index, "y", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -689,6 +713,7 @@ export default function App() {
                             <input
                               type="number"
                               value={item.z}
+                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "z", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -696,6 +721,7 @@ export default function App() {
                             <input
                               type="number"
                               value={item.param1}
+                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "param1", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -703,11 +729,13 @@ export default function App() {
                             <input
                               type="number"
                               value={item.param2}
+                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "param2", Number(event.target.value) || 0)}
                             />
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -777,6 +805,22 @@ function createWaypoint(seq: number, latDeg: number, lonDeg: number, altitudeM: 
 
 function resequence(items: MissionItem[]): MissionItem[] {
   return items.map((item, index) => ({ ...item, seq: index, current: index === 0 }));
+}
+
+function missionItemsForTransfer(items: MissionItem[], missionType: MissionType): MissionItem[] {
+  return missionType === "mission" ? [...items] : resequence(items);
+}
+
+function isReadonlyHomeItem(item: MissionItem | undefined, index: number, missionType: MissionType): boolean {
+  if (!item) {
+    return false;
+  }
+  return (
+    missionType === "mission" &&
+    index === 0 &&
+    item.command === 16 &&
+    item.frame === "global_int"
+  );
 }
 
 function formatMaybe(value?: number) {
