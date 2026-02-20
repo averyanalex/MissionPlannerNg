@@ -53,9 +53,8 @@ Build a modern, desktop-first Ground Control Station from scratch using Tauri.
 
 ## Backend/Core (Rust)
 - tokio (async runtime)
-- serialport + tokio-serial (device links)
-- UDP/TCP link adapters
-- MAVLink crate/generated bindings
+- rust-mavlink + serialport (live links and MAVLink parsing)
+- UDP/TCP/serial link adapters
 - tracing + tracing-subscriber (structured diagnostics)
 - anyhow/thiserror (error handling)
 - SQLite (settings, cache index, mission/log metadata)
@@ -197,7 +196,12 @@ Version every contract package and keep backward-compatible event evolution rule
 
 Assumption: small focused team (4-6 engineers). Timeline can compress/expand based on team size.
 
-## M0 - Foundation (Weeks 1-4)
+Current status:
+- M0: complete
+- M1: complete
+- M2: active (next execution milestone)
+
+## M0 - Foundation (Weeks 1-4) [COMPLETE]
 - Finalize architecture and ADRs
 - Set up monorepo, CI, lint/test gates
 - Create IPC baseline (`mp-ipc`) + event bus skeleton
@@ -207,7 +211,7 @@ Exit criteria:
 - Green CI for desktop build + unit tests
 - End-to-end smoke path runs in automation
 
-## M1 - Connectivity + Live Telemetry (Weeks 5-10)
+## M1 - Connectivity + Live Telemetry (Weeks 5-10) [COMPLETE]
 - Implement serial/UDP adapters and session lifecycle
 - Parse core MAVLink telemetry fields
 - Build initial Flight Data screen shell (HUD + map + status cards)
@@ -217,14 +221,69 @@ Exit criteria:
 - Connect to SITL and at least one real autopilot profile
 - Stable 30-minute telemetry session without crash
 
-## M2 - Mission Planning MVP (Weeks 11-16)
+## M2 - Mission Planning MVP (Weeks 11-16) [ACTIVE]
+
+Goal:
+- Operator can create/edit/upload/download/verify basic missions on SITL from the new app.
+
+M2 scope (must ship):
 - Mission model/editor (waypoints, altitude/speed basics)
 - Map interactions and mission table sync
-- Upload/download mission with validation and progress
-- Basic geofence/rally support
+- Upload/download mission with validation and progress events
+- Basic geofence/rally upload/download
+
+M2 workstreams:
+
+1. `mp-mission-core` crate (new)
+   - Add canonical mission domain types: `MissionPlan`, `MissionItem`, `MissionType`, `MissionFrame`
+   - Add validators: sequence continuity, command/frame compatibility, coordinate bounds, NaN protection
+   - Add normalizers for upload/readback comparisons (float tolerance + frame normalization)
+
+2. MAVLink mission transfer engine
+   - Upload flow: `MISSION_COUNT` -> (`MISSION_REQUEST_INT` or `MISSION_REQUEST`) -> `MISSION_ITEM_INT` -> `MISSION_ACK`
+   - Download flow: `MISSION_REQUEST_LIST` -> `MISSION_COUNT` -> `MISSION_REQUEST_INT` loop -> `MISSION_ITEM_INT` loop -> `MISSION_ACK`
+   - Support mission namespaces via `mission_type` (`MISSION`, `FENCE`, `RALLY`)
+   - Implement timeout/retry policy (default 1500 ms, item 250 ms, max retries 5)
+   - Add cancel/reset-to-idle behavior for failed transfers
+
+3. Tauri boundary integration
+   - Add commands in `apps/desktop/src-tauri/src/main.rs` for:
+     - `mission_download(mission_type)`
+     - `mission_upload(plan)`
+     - `mission_clear(mission_type)`
+     - `mission_set_current(seq)`
+   - Add events:
+     - `mission.progress`
+     - `mission.state`
+     - `mission.error`
+
+4. Frontend mission planning surface
+   - Add MapLibre-based mission map panel with click-to-add waypoint
+   - Add mission table with inline edit (command, lat/lon, altitude, hold/speed where applicable)
+   - Add row operations: add/delete/reorder and map-table two-way sync
+   - Add transfer actions: Read, Write, Verify, Clear
+   - Show transfer progress/error status inline
+
+5. SITL + regression automation
+   - Add integration tests for upload/download with retries and packet delay simulation
+   - Add roundtrip verification fixture: edit mission -> upload -> download -> compare normalized plan
+   - Add smoke tests for `MISSION`, `FENCE`, and `RALLY` types
+
+ArduPilot compatibility rules for M2:
+- Handle `MISSION_REQUEST` fallback by still answering with `MISSION_ITEM_INT`
+- Do not assume strict atomic upload behavior on ArduPilot; always run readback verification
+- Keep mission type flows independent (mission/fence/rally stored separately)
 
 Exit criteria:
-- Full mission edit -> upload -> readback roundtrip validated
+- Create/edit/upload/download/verify works on ArduPilot SITL for `MISSION`
+- Geofence and rally minimal roundtrip works (`MISSION_TYPE_FENCE`, `MISSION_TYPE_RALLY`)
+- Retry/timeout behavior proven in automated tests
+- Mission UI can complete a full plan-edit-sync loop without legacy app
+
+Out of scope (defer to later milestone):
+- Advanced survey/polygon/grid tools
+- Partial mission upload/download optimization
+- Terrain-following and camera-trigger authoring UX
 
 ## M3 - Parameters and Setup Workflows (Weeks 17-24)
 - Metadata ingestion and cache
@@ -306,14 +365,15 @@ Exit criteria:
 
 ---
 
-## 11) Immediate Next Steps (After Plan Approval)
+## 11) Immediate Next Steps (Current - M2 Kickoff)
 
-1. Create monorepo scaffold (`apps/`, `crates/`, `packages/`, `docs/adr`)
-2. Add ADR-001 (architecture), ADR-002 (IPC contract rules), ADR-003 (state/event model)
-3. Implement M0 skeleton:
-   - Tauri shell launches React app
-   - Rust event bus publishes mock telemetry
-   - Frontend renders mock Flight Data widgets
-4. Stand up baseline CI for build/test/lint on PRs
+1. Create `crates/mp-mission-core` with mission domain types + validators
+2. Implement upload/download state machines and retries in `mp-mission-core`
+3. Add Tauri mission commands/events to `apps/desktop/src-tauri/src/main.rs`
+4. Replace map placeholder with initial MapLibre mission editor surface
+5. Add mission table with add/edit/delete/reorder + map-table sync
+6. Implement read/write/verify/clear mission actions in frontend
+7. Add SITL mission roundtrip integration tests to CI
+8. Gate M2 completion on exit criteria above (including retry/timeout automation)
 
-This plan is intentionally biased toward shipping a usable cockpit early, then expanding safely.
+This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.
