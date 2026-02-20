@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use mp_mission_core::{validate_plan, MissionIssue, MissionPlan};
 use mp_telemetry_core::{
     list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, LinkManager, LinkStateEvent,
     TelemetryEvent,
@@ -43,6 +44,11 @@ fn list_serial_ports_cmd() -> Result<Vec<String>, String> {
     list_serial_ports()
 }
 
+#[tauri::command]
+fn mission_validate_plan(plan: MissionPlan) -> Vec<MissionIssue> {
+    validate_plan(&plan)
+}
+
 fn main() {
     let (event_tx, event_rx) = mpsc::channel::<CoreEvent>();
     let state = AppState {
@@ -72,7 +78,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             connect_link,
             disconnect_link,
-            list_serial_ports_cmd
+            list_serial_ports_cmd,
+            mission_validate_plan
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");

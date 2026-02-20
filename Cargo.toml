@@ -1,3 +1,7 @@
 [workspace]
-members = ["apps/desktop/src-tauri", "crates/mp-telemetry-core"]
+members = [
+    "apps/desktop/src-tauri",
+    "crates/mp-telemetry-core",
+    "crates/mp-mission-core",
+]
 resolver = "2"

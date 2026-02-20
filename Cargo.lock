@@ -1801,9 +1801,17 @@ dependencies = [
 name = "missionplanner_desktop"
 version = "0.1.0"
 dependencies = [
+ "mp-mission-core",
  "mp-telemetry-core",
  "tauri",
  "tauri-build",
+]
+
+[[package]]
+name = "mp-mission-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
