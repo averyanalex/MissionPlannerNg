@@ -21,18 +21,24 @@ type MissionMapProps = {
   missionItems: MissionItem[];
   homePosition: HomePosition | null;
   selectedSeq: number | null;
-  onAddWaypoint: (latDeg: number, lonDeg: number) => void;
-  onSelectSeq: (seq: number | null) => void;
+  onAddWaypoint?: (latDeg: number, lonDeg: number) => void;
+  onSelectSeq?: (seq: number | null) => void;
+  readOnly?: boolean;
+  vehiclePosition?: { latitude_deg: number; longitude_deg: number; heading_deg: number } | null;
+  currentMissionSeq?: number | null;
+  followVehicle?: boolean;
 };
 
-export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq }: MissionMapProps) {
+export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq, readOnly, vehiclePosition, currentMissionSeq, followVehicle }: MissionMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<number, Marker>>(new Map());
   const homeMarkerRef = useRef<Marker | null>(null);
+  const vehicleMarkerRef = useRef<Marker | null>(null);
   const hasSetInitialViewport = useRef(false);
   const onAddWaypointRef = useRef(onAddWaypoint);
   const onSelectSeqRef = useRef(onSelectSeq);
+  const readOnlyRef = useRef(readOnly);
   const missionGeoJsonRef = useRef<any>({
     type: "FeatureCollection",
     features: []
@@ -41,7 +47,8 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   useEffect(() => {
     onAddWaypointRef.current = onAddWaypoint;
     onSelectSeqRef.current = onSelectSeq;
-  }, [onAddWaypoint, onSelectSeq]);
+    readOnlyRef.current = readOnly;
+  }, [onAddWaypoint, onSelectSeq, readOnly]);
 
   const missionGeoJson = useMemo(() => {
     const lineCoordinates: [number, number][] = [];
@@ -195,7 +202,8 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
     });
 
     map.on("click", (event: MapMouseEvent) => {
-      onAddWaypointRef.current(event.lngLat.lat, event.lngLat.lng);
+      if (readOnlyRef.current) return;
+      onAddWaypointRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
 
     mapRef.current = map;
@@ -208,6 +216,10 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
       if (homeMarkerRef.current) {
         homeMarkerRef.current.remove();
         homeMarkerRef.current = null;
+      }
+      if (vehicleMarkerRef.current) {
+        vehicleMarkerRef.current.remove();
+        vehicleMarkerRef.current = null;
       }
       map.remove();
       mapRef.current = null;
@@ -287,10 +299,12 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
         const markerEl = document.createElement("button");
         markerEl.type = "button";
         markerEl.className = "mission-pin";
-        markerEl.addEventListener("click", (event) => {
-          event.stopPropagation();
-          onSelectSeqRef.current(item.seq);
-        });
+        if (!readOnly) {
+          markerEl.addEventListener("click", (event) => {
+            event.stopPropagation();
+            onSelectSeqRef.current?.(item.seq);
+          });
+        }
 
         const marker = new maplibregl.Marker({
           element: markerEl,
@@ -305,10 +319,47 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
       const markerElement = markersRef.current.get(item.seq)?.getElement();
       if (markerElement) {
         markerElement.textContent = String(item.seq + 1);
-        markerElement.classList.toggle("is-selected", selectedSeq === item.seq);
+        if (readOnly) {
+          markerElement.classList.toggle("is-current", currentMissionSeq === item.seq);
+        } else {
+          markerElement.classList.toggle("is-selected", selectedSeq === item.seq);
+        }
       }
     }
-  }, [missionItems, selectedSeq]);
+  }, [missionItems, selectedSeq, readOnly, currentMissionSeq]);
+
+  // Vehicle marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (vehiclePosition) {
+      const lngLat: [number, number] = [vehiclePosition.longitude_deg, vehiclePosition.latitude_deg];
+
+      if (vehicleMarkerRef.current) {
+        vehicleMarkerRef.current.setLngLat(lngLat);
+        const svg = vehicleMarkerRef.current.getElement().querySelector("svg");
+        if (svg) {
+          svg.style.transform = `rotate(${vehiclePosition.heading_deg}deg)`;
+        }
+      } else {
+        const el = document.createElement("div");
+        el.className = "vehicle-marker";
+        el.innerHTML = `<svg width="32" height="32" viewBox="0 0 32 32" style="transform: rotate(${vehiclePosition.heading_deg}deg)"><polygon points="16,4 26,28 16,22 6,28" fill="#ff4444" stroke="#fff" stroke-width="1.5"/></svg>`;
+
+        vehicleMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "center" })
+          .setLngLat(lngLat)
+          .addTo(map);
+      }
+
+      if (followVehicle) {
+        map.easeTo({ center: lngLat, duration: 500 });
+      }
+    } else if (vehicleMarkerRef.current) {
+      vehicleMarkerRef.current.remove();
+      vehicleMarkerRef.current = null;
+    }
+  }, [vehiclePosition, followVehicle]);
 
   // Fit bounds on initial load
   useEffect(() => {

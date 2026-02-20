@@ -69,12 +69,23 @@ export default function App() {
   const [homeLatInput, setHomeLatInput] = useState("");
   const [homeLonInput, setHomeLonInput] = useState("");
   const [homeAltInput, setHomeAltInput] = useState("");
+  const [followVehicle, setFollowVehicle] = useState(true);
   const browserMockTimer = useRef<number | null>(null);
 
   const transferActive =
     missionProgress?.phase === "request_count" ||
     missionProgress?.phase === "transfer_items" ||
     missionProgress?.phase === "await_ack";
+
+  const vehiclePosition =
+    telemetry.latitude_deg != null && telemetry.longitude_deg != null &&
+    isFinite(telemetry.latitude_deg) && isFinite(telemetry.longitude_deg)
+      ? {
+          latitude_deg: telemetry.latitude_deg,
+          longitude_deg: telemetry.longitude_deg,
+          heading_deg: telemetry.heading_deg ?? 0,
+        }
+      : null;
 
   useEffect(() => {
     let stopTelemetry: (() => void) | null = null;
@@ -541,7 +552,9 @@ export default function App() {
         speed_mps: 55 + Math.cos(tick / 7) * 2,
         fuel_pct: Math.max(10, 90 - tick * 0.15),
         heading_deg: (tick * 4) % 360,
-        fix_type: 3
+        fix_type: 3,
+        latitude_deg: 47.397742 + 0.002 * Math.sin(tick * 4 * Math.PI / 180),
+        longitude_deg: 8.545594 + 0.002 * Math.cos(tick * 4 * Math.PI / 180)
       });
     }, 1000);
   }
@@ -658,10 +671,45 @@ export default function App() {
 
         <section className="map-panel">
           {activeTab === "flight" ? (
-            <div className="map-placeholder">
-              <h3>Map Placeholder</h3>
-              <p>Telemetry timestamp: {telemetry.ts || 0}</p>
-              <p>Planner tab now includes mission model validation.</p>
+            <div className="flight-surface">
+              <div className="flight-map-container">
+                <MissionMap
+                  missionItems={missionItems}
+                  homePosition={missionType === "mission" ? homePosition : null}
+                  selectedSeq={null}
+                  readOnly
+                  vehiclePosition={vehiclePosition}
+                  currentMissionSeq={missionState?.current_seq ?? null}
+                  followVehicle={followVehicle}
+                />
+                <button className="follow-toggle" onClick={() => setFollowVehicle(v => !v)}>
+                  {followVehicle ? "Following" : "Follow Vehicle"}
+                </button>
+              </div>
+              <div className="flight-status-bar">
+                <div className="flight-status-item">
+                  <span className="flight-status-label">Mode</span>
+                  <span className="flight-status-value">{missionState?.mission_state ?? "unknown"}</span>
+                </div>
+                <div className="flight-status-item">
+                  <span className="flight-status-label">Waypoint</span>
+                  <span className="flight-status-value">
+                    {missionState ? `${missionState.current_seq + 1} / ${missionState.total_items}` : "--"}
+                  </span>
+                </div>
+                <div className="flight-status-item">
+                  <span className="flight-status-label">Alt</span>
+                  <span className="flight-status-value">{formatMaybe(telemetry.altitude_m)} m</span>
+                </div>
+                <div className="flight-status-item">
+                  <span className="flight-status-label">Speed</span>
+                  <span className="flight-status-value">{formatMaybe(telemetry.speed_mps)} m/s</span>
+                </div>
+                <div className="flight-status-item">
+                  <span className="flight-status-label">Heading</span>
+                  <span className="flight-status-value">{formatMaybe(telemetry.heading_deg)}&deg;</span>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="planner-surface">
