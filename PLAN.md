@@ -199,7 +199,7 @@ Assumption: small focused team (4-6 engineers). Timeline can compress/expand bas
 Current status:
 - M0: complete
 - M1: complete
-- M2: active (next execution milestone)
+- M2: active (MapLibre planner + map/table sync + mission state wiring complete; SITL automation and acceptance loop remain)
 
 ## M0 - Foundation (Weeks 1-4) [COMPLETE]
 - Finalize architecture and ADRs
@@ -235,11 +235,13 @@ M2 scope (must ship):
 M2 workstreams:
 
 1. `mp-mission-core` crate (new)
+   - Status: complete
    - Add canonical mission domain types: `MissionPlan`, `MissionItem`, `MissionType`, `MissionFrame`
    - Add validators: sequence continuity, command/frame compatibility, coordinate bounds, NaN protection
    - Add normalizers for upload/readback comparisons (float tolerance + frame normalization)
 
 2. MAVLink mission transfer engine
+   - Status: active (real transfer path implemented, mission namespaces wired on protocol messages, retry/timeout tests passing)
    - Upload flow: `MISSION_COUNT` -> (`MISSION_REQUEST_INT` or `MISSION_REQUEST`) -> `MISSION_ITEM_INT` -> `MISSION_ACK`
    - Download flow: `MISSION_REQUEST_LIST` -> `MISSION_COUNT` -> `MISSION_REQUEST_INT` loop -> `MISSION_ITEM_INT` loop -> `MISSION_ACK`
    - Support mission namespaces via `mission_type` (`MISSION`, `FENCE`, `RALLY`)
@@ -247,17 +249,19 @@ M2 workstreams:
    - Add cancel/reset-to-idle behavior for failed transfers
 
 3. Tauri boundary integration
+   - Status: active (upload/download/clear/verify + `mission_set_current` + `mission.state` integrated)
    - Add commands in `apps/desktop/src-tauri/src/main.rs` for:
-     - `mission_download(mission_type)`
-     - `mission_upload(plan)`
-     - `mission_clear(mission_type)`
-     - `mission_set_current(seq)`
+       - `mission_download(mission_type)`
+       - `mission_upload(plan)`
+       - `mission_clear(mission_type)`
+       - `mission_set_current(seq)`
    - Add events:
      - `mission.progress`
      - `mission.state`
      - `mission.error`
 
 4. Frontend mission planning surface
+   - Status: active (MapLibre panel + map/table selection sync + row operations + transfer actions in place)
    - Add MapLibre-based mission map panel with click-to-add waypoint
    - Add mission table with inline edit (command, lat/lon, altitude, hold/speed where applicable)
    - Add row operations: add/delete/reorder and map-table two-way sync
@@ -265,6 +269,7 @@ M2 workstreams:
    - Show transfer progress/error status inline
 
 5. SITL + regression automation
+   - Status: next
    - Add integration tests for upload/download with retries and packet delay simulation
    - Add roundtrip verification fixture: edit mission -> upload -> download -> compare normalized plan
    - Add smoke tests for `MISSION`, `FENCE`, and `RALLY` types
@@ -365,15 +370,12 @@ Exit criteria:
 
 ---
 
-## 11) Immediate Next Steps (Current - M2 Kickoff)
+## 11) Immediate Next Steps (Current - M2 Execution)
 
-1. Create `crates/mp-mission-core` with mission domain types + validators
-2. Implement upload/download state machines and retries in `mp-mission-core`
-3. Add Tauri mission commands/events to `apps/desktop/src-tauri/src/main.rs`
-4. Replace map placeholder with initial MapLibre mission editor surface
-5. Add mission table with add/edit/delete/reorder + map-table sync
-6. Implement read/write/verify/clear mission actions in frontend
-7. Add SITL mission roundtrip integration tests to CI
-8. Gate M2 completion on exit criteria above (including retry/timeout automation)
+1. Add SITL mission roundtrip integration suite covering `MISSION`, `FENCE`, and `RALLY`
+2. Extend CI with a SITL mission job (or staged/nightly gate) while keeping fast per-PR checks
+3. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
+4. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
+5. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)
 
 This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.

@@ -54,6 +54,18 @@ pub struct TelemetryEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionStateEvent {
+    pub session_id: String,
+    pub current_seq: u16,
+    pub total_items: u16,
+    pub mission_state: String,
+    pub mission_mode: u8,
+    pub mission_id: u32,
+    pub fence_id: u32,
+    pub rally_points_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub endpoint: LinkEndpoint,
 }
@@ -69,6 +81,7 @@ pub enum CoreEvent {
     Telemetry(TelemetryEvent),
     MissionProgress(TransferProgress),
     MissionError(TransferError),
+    MissionState(MissionStateEvent),
 }
 
 struct SessionHandle {
@@ -197,6 +210,21 @@ impl LinkManager {
         Ok(plans_equivalent(&lhs, &rhs, CompareTolerance::default()))
     }
 
+    pub fn mission_set_current(&self, session_id: &str, seq: u16) -> Result<(), String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::SetCurrent { seq, reply_tx })
+            .map_err(|_| String::from("mission session offline"))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| String::from("mission set current timed out"))?
+    }
+
     pub fn disconnect_all(&mut self) {
         let ids: Vec<String> = self.sessions.keys().cloned().collect();
         for id in ids {
@@ -216,6 +244,10 @@ enum SessionCommand {
     },
     Clear {
         mission_type: MissionType,
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
+    SetCurrent {
+        seq: u16,
         reply_tx: mpsc::Sender<Result<(), String>>,
     },
     Shutdown,
@@ -273,9 +305,10 @@ fn run_session(
         match connection.try_recv() {
             Ok((header, message)) => {
                 update_vehicle_target(&mut vehicle_target, &header, &message);
-                if aggregate.apply_message(message) {
+                if aggregate.apply_message(message.clone()) {
                     emit_telemetry(&event_tx, &session_id, &aggregate);
                 }
+                maybe_emit_mission_state(&event_tx, &session_id, &message);
             }
             Err(err) => {
                 if is_non_fatal_read_error(&err) {
@@ -350,7 +383,81 @@ fn handle_session_command(
             let _ = reply_tx.send(result);
         }
         SessionCommand::Shutdown => {}
+        SessionCommand::SetCurrent { seq, reply_tx } => {
+            let result = mission_set_current_internal(
+                session_id,
+                event_tx,
+                connection,
+                aggregate,
+                vehicle_target,
+                stop_flag,
+                seq,
+            );
+            let _ = reply_tx.send(result);
+        }
     }
+}
+
+fn mission_set_current_internal(
+    session_id: &str,
+    event_tx: &mpsc::Sender<CoreEvent>,
+    connection: &mut impl MavConnection<common::MavMessage>,
+    aggregate: &mut TelemetryAggregate,
+    vehicle_target: &mut Option<VehicleTarget>,
+    stop_flag: &Arc<AtomicBool>,
+    seq: u16,
+) -> Result<(), String> {
+    let target = vehicle_target
+        .as_ref()
+        .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
+        .clone();
+
+    let send_set_current = |connection: &mut dyn MavConnection<common::MavMessage>| {
+        send_message(
+            connection,
+            common::MavMessage::MISSION_SET_CURRENT(common::MISSION_SET_CURRENT_DATA {
+                seq,
+                target_system: target.system_id,
+                target_component: target.component_id,
+            }),
+        )
+    };
+
+    let retry_policy = RetryPolicy::default();
+    for _attempt in 0..=retry_policy.max_retries {
+        send_set_current(connection)?;
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(retry_policy.request_timeout_ms) {
+            let remaining = Duration::from_millis(retry_policy.request_timeout_ms)
+                .saturating_sub(started.elapsed());
+            let message = match wait_for_message(
+                session_id,
+                event_tx,
+                connection,
+                aggregate,
+                vehicle_target,
+                stop_flag,
+                remaining,
+                |msg| matches!(msg, common::MavMessage::MISSION_CURRENT(_)),
+            ) {
+                Ok(message) => message,
+                Err(err) if err == MISSION_TIMEOUT_ERROR => break,
+                Err(err) => return Err(err),
+            };
+
+            if let common::MavMessage::MISSION_CURRENT(data) = message {
+                if data.seq == seq {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    emit_and_fail_mission(
+        event_tx,
+        "mission.set_current_timeout",
+        "Did not receive MISSION_CURRENT confirmation for requested sequence",
+    )
 }
 
 fn mission_upload_internal(
@@ -848,6 +955,7 @@ where
                 if aggregate.apply_message(message.clone()) {
                     emit_telemetry(event_tx, session_id, aggregate);
                 }
+                maybe_emit_mission_state(event_tx, session_id, &message);
                 if predicate(&message) {
                     return Ok(message);
                 }
@@ -892,6 +1000,25 @@ fn emit_and_fail_mission(
 
 fn emit_mission_progress(event_tx: &mpsc::Sender<CoreEvent>, progress: TransferProgress) {
     let _ = event_tx.send(CoreEvent::MissionProgress(progress));
+}
+
+fn maybe_emit_mission_state(
+    event_tx: &mpsc::Sender<CoreEvent>,
+    session_id: &str,
+    message: &common::MavMessage,
+) {
+    if let common::MavMessage::MISSION_CURRENT(data) = message {
+        let _ = event_tx.send(CoreEvent::MissionState(MissionStateEvent {
+            session_id: session_id.to_string(),
+            current_seq: data.seq,
+            total_items: data.total,
+            mission_state: format!("{:?}", data.mission_state),
+            mission_mode: data.mission_mode,
+            mission_id: data.mission_id,
+            fence_id: data.fence_id,
+            rally_points_id: data.rally_points_id,
+        }));
+    }
 }
 
 fn send_message(
@@ -1227,6 +1354,18 @@ mod tests {
         })
     }
 
+    fn mission_current(seq: u16, total: u16) -> common::MavMessage {
+        common::MavMessage::MISSION_CURRENT(common::MISSION_CURRENT_DATA {
+            seq,
+            total,
+            mission_state: common::MissionState::MISSION_STATE_ACTIVE,
+            mission_mode: 1,
+            mission_id: 100,
+            fence_id: 200,
+            rally_points_id: 300,
+        })
+    }
+
     fn base_inputs() -> (TelemetryAggregate, Option<VehicleTarget>, Arc<AtomicBool>) {
         (
             TelemetryAggregate::default(),
@@ -1440,5 +1579,41 @@ mod tests {
         assert!(mission_errors
             .iter()
             .any(|error| error.code == "transfer.timeout"));
+    }
+
+    #[test]
+    fn set_current_sends_command_and_emits_state() {
+        let mut connection = MockConnection::new(vec![mission_current(2, 5)]);
+        let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        let result = mission_set_current_internal(
+            "session-1",
+            &event_tx,
+            &mut connection,
+            &mut aggregate,
+            &mut vehicle_target,
+            &stop_flag,
+            2,
+        );
+
+        assert!(result.is_ok());
+
+        let sent = connection.sent_messages();
+        assert!(sent
+            .iter()
+            .any(|message| matches!(message, common::MavMessage::MISSION_SET_CURRENT(_))));
+
+        let mission_states: Vec<MissionStateEvent> = event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                CoreEvent::MissionState(state) => Some(state),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(mission_states.len(), 1);
+        assert_eq!(mission_states[0].current_seq, 2);
+        assert_eq!(mission_states[0].total_items, 5);
     }
 }

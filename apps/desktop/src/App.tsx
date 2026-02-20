@@ -3,7 +3,10 @@ import {
   clearMissionPlan,
   downloadMissionPlan,
   subscribeMissionError,
+  subscribeMissionState,
+  setCurrentMissionItem,
   subscribeMissionProgress,
+  type MissionState,
   uploadMissionPlan,
   validateMissionPlan,
   verifyMissionRoundtrip,
@@ -24,6 +27,7 @@ import {
   type LinkStateEvent,
   type Telemetry
 } from "./telemetry";
+import { MissionMap } from "./components/MissionMap";
 import "./styles.css";
 
 const emptyTelemetry: Telemetry = {
@@ -51,9 +55,11 @@ export default function App() {
   ]);
   const [missionIssues, setMissionIssues] = useState<MissionIssue[]>([]);
   const [missionType, setMissionType] = useState<MissionType>("mission");
+  const [selectedMissionSeq, setSelectedMissionSeq] = useState<number | null>(null);
   const [roundtripStatus, setRoundtripStatus] = useState<string>("Not checked");
   const [missionProgress, setMissionProgress] = useState<TransferProgress | null>(null);
   const [missionTransferError, setMissionTransferError] = useState<TransferError | null>(null);
+  const [missionState, setMissionState] = useState<MissionState | null>(null);
   const browserMockTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -94,10 +100,16 @@ export default function App() {
   useEffect(() => {
     let stopProgress: (() => void) | null = null;
     let stopError: (() => void) | null = null;
+    let stopState: (() => void) | null = null;
 
     (async () => {
       stopProgress = await subscribeMissionProgress(setMissionProgress);
       stopError = await subscribeMissionError(setMissionTransferError);
+      stopState = await subscribeMissionState((event) => {
+        if (sessionId === null || event.session_id === sessionId) {
+          setMissionState(event);
+        }
+      });
     })();
 
     return () => {
@@ -107,8 +119,11 @@ export default function App() {
       if (stopError) {
         stopError();
       }
+      if (stopState) {
+        stopState();
+      }
     };
-  }, []);
+  }, [sessionId]);
 
   async function refreshSerialPorts() {
     try {
@@ -202,6 +217,7 @@ export default function App() {
     try {
       const downloaded = await downloadMissionPlan(sessionId, missionType);
       setMissionItems(resequence(downloaded.items));
+      setSelectedMissionSeq(null);
       setMissionIssues([]);
       setRoundtripStatus("Downloaded sample plan");
     } catch (err) {
@@ -218,6 +234,7 @@ export default function App() {
     try {
       await clearMissionPlan(sessionId, missionType);
       setMissionItems([]);
+      setSelectedMissionSeq(null);
       setMissionIssues([]);
       setRoundtripStatus("Cleared");
     } catch (err) {
@@ -238,6 +255,24 @@ export default function App() {
     try {
       const ok = await verifyMissionRoundtrip(sessionId, plan);
       setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
+    } catch (err) {
+      setError(asErrorMessage(err));
+    }
+  }
+
+  async function handleSetCurrentMissionItem() {
+    if (sessionId === null) {
+      setError("connect to vehicle before set current");
+      return;
+    }
+    if (selectedMissionSeq === null) {
+      setError("select a mission row before set current");
+      return;
+    }
+
+    try {
+      await setCurrentMissionItem(sessionId, selectedMissionSeq);
+      setError(null);
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -264,18 +299,120 @@ export default function App() {
   }
 
   function addWaypoint() {
+    let nextSelected = 0;
     setMissionItems((items) => {
       const nextSeq = items.length;
+      nextSelected = nextSeq;
       const base = items[items.length - 1];
       if (!base) {
         return [createWaypoint(0, 47.397742, 8.545594, 25)];
       }
       return [...items, createWaypoint(nextSeq, base.x / 1e7 + 0.0004, base.y / 1e7 + 0.0004, base.z)];
     });
+    setSelectedMissionSeq(nextSelected);
+  }
+
+  function addWaypointAt(latDeg: number, lonDeg: number) {
+    let nextSelected = 0;
+    setMissionItems((items) => {
+      const nextSeq = items.length;
+      nextSelected = nextSeq;
+      const altitude = items[items.length - 1]?.z ?? 25;
+      return [...items, createWaypoint(nextSeq, latDeg, lonDeg, altitude)];
+    });
+    setSelectedMissionSeq(nextSelected);
   }
 
   function removeLastWaypoint() {
     setMissionItems((items) => resequence(items.slice(0, -1)));
+    setSelectedMissionSeq((current) => {
+      if (current === null) {
+        return null;
+      }
+      const nextLength = Math.max(0, missionItems.length - 1);
+      if (nextLength === 0) {
+        return null;
+      }
+      return Math.min(current, nextLength - 1);
+    });
+  }
+
+  function insertWaypointAt(index: number) {
+    let nextSelected = 0;
+    setMissionItems((items) => {
+      if (items.length === 0) {
+        nextSelected = 0;
+        return [createWaypoint(0, 47.397742, 8.545594, 25)];
+      }
+
+      const insertIndex = Math.max(0, Math.min(index, items.length));
+      nextSelected = insertIndex;
+      const before = items[insertIndex - 1];
+      const after = items[insertIndex];
+      const seed = before ?? after;
+      if (!seed) {
+        return [createWaypoint(0, 47.397742, 8.545594, 25)];
+      }
+
+      let lat = seed.x / 1e7;
+      let lon = seed.y / 1e7;
+      let alt = seed.z;
+      if (before && after) {
+        lat = (before.x + after.x) / 2 / 1e7;
+        lon = (before.y + after.y) / 2 / 1e7;
+        alt = (before.z + after.z) / 2;
+      } else if (before && !after) {
+        lat += 0.0004;
+        lon += 0.0004;
+      } else if (!before && after) {
+        lat -= 0.0004;
+        lon -= 0.0004;
+      }
+
+      const next = [...items];
+      next.splice(insertIndex, 0, createWaypoint(0, lat, lon, alt));
+      return resequence(next);
+    });
+    setSelectedMissionSeq(nextSelected);
+  }
+
+  function deleteWaypointAt(index: number) {
+    setMissionItems((items) => {
+      if (index < 0 || index >= items.length) {
+        return items;
+      }
+      const next = [...items];
+      next.splice(index, 1);
+      return resequence(next);
+    });
+    setSelectedMissionSeq((current) => {
+      if (current === null) {
+        return null;
+      }
+      if (missionItems.length <= 1) {
+        return null;
+      }
+      return Math.min(current, missionItems.length - 2);
+    });
+  }
+
+  function moveWaypoint(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) {
+      return;
+    }
+    setMissionItems((items) => {
+      if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length) {
+        return items;
+      }
+      const next = [...items];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) {
+        return items;
+      }
+      next.splice(toIndex, 0, moved);
+      return resequence(next);
+    });
+    setSelectedMissionSeq(toIndex);
   }
 
   function startBrowserMock() {
@@ -426,12 +563,63 @@ export default function App() {
                 <button className="secondary" onClick={removeLastWaypoint}>
                   Remove Last
                 </button>
+                <button
+                  className="secondary"
+                  onClick={() => insertWaypointAt(selectedMissionSeq ?? missionItems.length)}
+                >
+                  Insert Before Selected
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    insertWaypointAt(selectedMissionSeq === null ? missionItems.length : selectedMissionSeq + 1)
+                  }
+                >
+                  Insert After Selected
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => deleteWaypointAt(selectedMissionSeq ?? missionItems.length - 1)}
+                >
+                  Delete Selected
+                </button>
+                <button
+                  className="secondary"
+                  disabled={selectedMissionSeq === null || selectedMissionSeq <= 0}
+                  onClick={() => {
+                    if (selectedMissionSeq !== null) {
+                      moveWaypoint(selectedMissionSeq, selectedMissionSeq - 1);
+                    }
+                  }}
+                >
+                  Move Up
+                </button>
+                <button
+                  className="secondary"
+                  disabled={
+                    selectedMissionSeq === null || selectedMissionSeq >= Math.max(0, missionItems.length - 1)
+                  }
+                  onClick={() => {
+                    if (selectedMissionSeq !== null) {
+                      moveWaypoint(selectedMissionSeq, selectedMissionSeq + 1);
+                    }
+                  }}
+                >
+                  Move Down
+                </button>
                 <button onClick={handleValidateMission}>Validate Plan</button>
                 <button onClick={handleSimulateMissionUpload}>Write</button>
                 <button onClick={handleSimulateMissionDownload}>Read</button>
                 <button onClick={handleVerifyRoundtrip}>Verify</button>
                 <button className="secondary" onClick={handleSimulateMissionClear}>
                   Clear
+                </button>
+                <button
+                  className="secondary"
+                  disabled={sessionId === null || selectedMissionSeq === null}
+                  onClick={handleSetCurrentMissionItem}
+                >
+                  Set Current
                 </button>
               </div>
 
@@ -445,71 +633,84 @@ export default function App() {
                 <span className="roundtrip-status">{roundtripStatus}</span>
               </div>
 
-              <div className="mission-table-wrap">
-                <table className="mission-table">
-                  <thead>
-                    <tr>
-                      <th>Seq</th>
-                      <th>Cmd</th>
-                      <th>Lat</th>
-                      <th>Lon</th>
-                      <th>Alt</th>
-                      <th>Hold</th>
-                      <th>Accept</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {missionItems.map((item, index) => (
-                      <tr key={item.seq}>
-                        <td>{item.seq}</td>
-                        <td>
-                          <input
-                            type="number"
-                            value={item.command}
-                            onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            step="0.000001"
-                            value={(item.x / 1e7).toFixed(6)}
-                            onChange={(event) => updateMissionCoordinate(index, "x", Number(event.target.value) || 0)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            step="0.000001"
-                            value={(item.y / 1e7).toFixed(6)}
-                            onChange={(event) => updateMissionCoordinate(index, "y", Number(event.target.value) || 0)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            value={item.z}
-                            onChange={(event) => updateMissionField(index, "z", Number(event.target.value) || 0)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            value={item.param1}
-                            onChange={(event) => updateMissionField(index, "param1", Number(event.target.value) || 0)}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            value={item.param2}
-                            onChange={(event) => updateMissionField(index, "param2", Number(event.target.value) || 0)}
-                          />
-                        </td>
+              <div className="planner-workspace">
+                <MissionMap
+                  missionItems={missionItems}
+                  selectedSeq={selectedMissionSeq}
+                  onAddWaypoint={addWaypointAt}
+                  onSelectSeq={setSelectedMissionSeq}
+                />
+
+                <div className="mission-table-wrap">
+                  <table className="mission-table">
+                    <thead>
+                      <tr>
+                        <th>Seq</th>
+                        <th>Cmd</th>
+                        <th>Lat</th>
+                        <th>Lon</th>
+                        <th>Alt</th>
+                        <th>Hold</th>
+                        <th>Accept</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {missionItems.map((item, index) => (
+                        <tr
+                          key={item.seq}
+                          className={selectedMissionSeq === item.seq ? "is-selected" : ""}
+                          onClick={() => setSelectedMissionSeq(item.seq)}
+                        >
+                          <td>{item.seq}</td>
+                          <td>
+                            <input
+                              type="number"
+                              value={item.command}
+                              onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={(item.x / 1e7).toFixed(6)}
+                              onChange={(event) => updateMissionCoordinate(index, "x", Number(event.target.value) || 0)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={(item.y / 1e7).toFixed(6)}
+                              onChange={(event) => updateMissionCoordinate(index, "y", Number(event.target.value) || 0)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={item.z}
+                              onChange={(event) => updateMissionField(index, "z", Number(event.target.value) || 0)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={item.param1}
+                              onChange={(event) => updateMissionField(index, "param1", Number(event.target.value) || 0)}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              value={item.param2}
+                              onChange={(event) => updateMissionField(index, "param2", Number(event.target.value) || 0)}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
 
               <div className="mission-issues">
@@ -541,6 +742,11 @@ export default function App() {
                 {missionTransferError ? (
                   <p className="error-inline">
                     {missionTransferError.code}: {missionTransferError.message}
+                  </p>
+                ) : null}
+                {missionState ? (
+                  <p>
+                    Current seq: {missionState.current_seq} / total: {missionState.total_items} (state: {missionState.mission_state})
                   </p>
                 ) : null}
               </div>

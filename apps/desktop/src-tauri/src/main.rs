@@ -5,7 +5,7 @@ use mp_mission_core::{
 };
 use mp_telemetry_core::{
     list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, LinkManager, LinkStateEvent,
-    TelemetryEvent,
+    MissionStateEvent, TelemetryEvent,
 };
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -103,6 +103,19 @@ fn mission_verify_roundtrip(
     manager.mission_verify_roundtrip(&session_id, plan)
 }
 
+#[tauri::command]
+fn mission_set_current(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    seq: u16,
+) -> Result<(), String> {
+    let manager = state
+        .manager
+        .lock()
+        .map_err(|_| String::from("failed to lock link manager"))?;
+    manager.mission_set_current(&session_id, seq)
+}
+
 fn main() {
     let (event_tx, event_rx) = mpsc::channel::<CoreEvent>();
     let state = AppState {
@@ -129,6 +142,9 @@ fn main() {
                         CoreEvent::MissionError(payload) => {
                             let _ = emit_mission_error_event(&app_handle, payload);
                         }
+                        CoreEvent::MissionState(payload) => {
+                            let _ = emit_mission_state_event(&app_handle, payload);
+                        }
                     }
                 }
             });
@@ -143,7 +159,8 @@ fn main() {
             mission_upload_plan,
             mission_download_plan,
             mission_clear_plan,
-            mission_verify_roundtrip
+            mission_verify_roundtrip,
+            mission_set_current
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");
@@ -175,4 +192,11 @@ fn emit_mission_error_event(
     payload: TransferError,
 ) -> Result<(), tauri::Error> {
     app_handle.emit("mission.error", payload)
+}
+
+fn emit_mission_state_event(
+    app_handle: &tauri::AppHandle,
+    payload: MissionStateEvent,
+) -> Result<(), tauri::Error> {
+    app_handle.emit("mission.state", payload)
 }

@@ -189,6 +189,7 @@ body,
 
 .planner-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -199,6 +200,11 @@ body,
   background: #1f2d3d;
   color: #d7e6f6;
   padding: 6px 10px;
+}
+
+.planner-actions button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .planner-actions select {
@@ -220,7 +226,22 @@ body,
 }
 
 .mission-table-wrap {
+  min-height: 320px;
   overflow: auto;
+}
+
+.planner-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, 44%) 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.mission-map {
+  min-height: 420px;
+  border: 1px solid #2f4358;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .mission-table {
@@ -239,6 +260,14 @@ body,
   background: #1a2634;
   color: #a9bfd4;
   font-weight: 600;
+}
+
+.mission-table tbody tr {
+  cursor: pointer;
+}
+
+.mission-table tbody tr.is-selected td {
+  background: #203246;
 }
 
 .mission-table input {
@@ -285,5 +314,13 @@ body,
 @media (max-width: 900px) {
   .main-grid {
     grid-template-columns: 1fr;
+  }
+
+  .planner-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-map {
+    min-height: 320px;
   }
 }
