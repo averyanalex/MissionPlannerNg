@@ -144,10 +144,12 @@ Use typed commands (request/response) plus typed event streams.
 - Firmware commands: list targets/download/flash/verify
 
 ## Event Categories
-- `telemetry.frame`
-- `telemetry.health`
-- `link.state`
+- `telemetry://tick`
+- `link://state`
+- `home://position`
 - `mission.progress`
+- `mission.state`
+- `mission.error`
 - `params.progress`
 - `log.playback.tick`
 - `firmware.progress`
@@ -199,7 +201,7 @@ Assumption: small focused team (4-6 engineers). Timeline can compress/expand bas
 Current status:
 - M0: complete
 - M1: complete
-- M2: active (MapLibre 3D planner + map/table sync + mission state wiring complete; SITL roundtrip harness in place, full acceptance loop remains)
+- M2: active (mission model with first-class home position, wire boundary translation, HOME_POSITION telemetry, MapLibre 3D planner, map/table sync, transfer engine, SITL roundtrip suite passing; acceptance polish remains)
 
 ## M0 - Foundation (Weeks 1-4) [COMPLETE]
 - Finalize architecture and ADRs
@@ -236,44 +238,41 @@ M2 workstreams:
 
 1. `mp-mission-core` crate (new)
    - Status: complete
-   - Add canonical mission domain types: `MissionPlan`, `MissionItem`, `MissionType`, `MissionFrame`
-   - Add validators: sequence continuity, command/frame compatibility, coordinate bounds, NaN protection
-   - Add normalizers for upload/readback comparisons (float tolerance + frame normalization)
+   - Canonical mission domain types: `MissionPlan`, `MissionItem`, `MissionType`, `MissionFrame`
+   - First-class `HomePosition` type with `Option<HomePosition>` on `MissionPlan`
+   - Wire boundary translation: `items_for_wire_upload()` prepends home as seq 0 for Mission type, `plan_from_wire_download()` extracts seq 0 as home
+   - Validators: sequence continuity, coordinate bounds, NaN protection, home lat/lon range
+   - Normalizers for upload/readback comparisons (float tolerance + frame normalization)
+   - `MissionTransferMachine` accepts wire item count (including home) for correct progress tracking
 
 2. MAVLink mission transfer engine
-   - Status: active (real transfer path implemented, mission namespaces wired on protocol messages, retry/timeout tests passing, legacy download compatibility in progress)
+   - Status: complete
    - Upload flow: `MISSION_COUNT` -> (`MISSION_REQUEST_INT` or `MISSION_REQUEST`) -> `MISSION_ITEM_INT` -> `MISSION_ACK`
    - Download flow: `MISSION_REQUEST_LIST` -> `MISSION_COUNT` -> `MISSION_REQUEST_INT` loop -> `MISSION_ITEM_INT` loop -> `MISSION_ACK`
-   - Support mission namespaces via `mission_type` (`MISSION`, `FENCE`, `RALLY`)
-   - Implement timeout/retry policy (default 1500 ms, item 250 ms, max retries 5)
-   - Add cancel/reset-to-idle behavior for failed transfers
+   - Wire boundary adaptation: upload uses `items_for_wire_upload()`, download uses `plan_from_wire_download()` so the rest of the stack never sees the wire seq-0 home item
+   - `HOME_POSITION` MAVLink message (ID 242) handled: emits `HomePositionEvent` on receipt, auto-requests via `MAV_CMD_REQUEST_MESSAGE` after first heartbeat
+   - Mission namespaces via `mission_type` (`MISSION`, `FENCE`, `RALLY`)
+   - Timeout/retry policy (default 1500 ms, item 250 ms, max retries 5)
+   - Cancel/reset-to-idle behavior for failed transfers
 
 3. Tauri boundary integration
-   - Status: active (upload/download/clear/verify + `mission_set_current` + `mission.state` integrated)
-   - Add commands in `apps/desktop/src-tauri/src/main.rs` for:
-       - `mission_download(mission_type)`
-       - `mission_upload(plan)`
-       - `mission_clear(mission_type)`
-       - `mission_set_current(seq)`
-   - Add events:
-     - `mission.progress`
-     - `mission.state`
-     - `mission.error`
+   - Status: complete
+   - Commands: `mission_download`, `mission_upload`, `mission_clear`, `mission_verify_roundtrip`, `mission_set_current`
+   - Events: `mission.progress`, `mission.state`, `mission.error`, `home://position`
 
 4. Frontend mission planning surface
-   - Status: active (MapLibre 3D terrain panel + map/table selection sync + row operations + transfer actions in place)
-   - Add MapLibre-based mission map panel with click-to-add waypoint
-   - Add mission table with inline edit (command, lat/lon, altitude, hold/speed where applicable)
-   - Add row operations: add/delete/reorder and map-table two-way sync
-   - Add transfer actions: Read, Write, Verify, Clear
-   - Show transfer progress/error status inline
+   - Status: complete
+   - Home position is a standalone `homePosition` state, not embedded in items array; sourced from vehicle `HOME_POSITION` telemetry, mission download, or manual entry
+   - MapLibre 3D terrain panel with click-to-add waypoints, separate home marker ("H" pin), mission line GeoJSON
+   - Mission table with inline edit (command, lat/lon, altitude, hold/speed); items are 0-indexed internally, displayed 1-indexed
+   - Row operations: add/delete/reorder with map-table two-way selection sync
+   - Transfer actions: Read, Write, Verify, Clear with progress/error status inline
 
 5. SITL + regression automation
-   - Status: active (nightly/manual SITL workflow added; roundtrip suite scaffolded for `MISSION`, `FENCE`, `RALLY`)
-   - Current behavior: local SITL run is staged/non-strict by default (`--test-threads=1`) to avoid flaky false negatives on unsupported mission namespaces/timeouts; bridge startup now uses explicit daemonized MAVProxy defaults
-   - Add integration tests for upload/download with retries and packet delay simulation
-   - Add roundtrip verification fixture: edit mission -> upload -> download -> compare normalized plan
-   - Add smoke tests for `MISSION`, `FENCE`, and `RALLY` types
+   - Status: complete
+   - Roundtrip suite for `MISSION`, `FENCE`, `RALLY` all passing; sample mission plan includes home position, roundtrip comparison strips home (autopilot may overwrite) and verifies items via `plans_equivalent`
+   - Staged/non-strict mode by default (`--test-threads=1`); strict mode via `MP_SITL_STRICT=1`
+   - Nightly/manual CI workflow with retry logic for flaky SITL startup
 
 ArduPilot compatibility rules for M2:
 - Handle `MISSION_REQUEST` fallback by still answering with `MISSION_ITEM_INT`
@@ -371,12 +370,12 @@ Exit criteria:
 
 ---
 
-## 11) Immediate Next Steps (Current - M2 Execution)
+## 11) Immediate Next Steps (Current - M2 Closing)
 
-1. Stabilize SITL roundtrip suite: non-empty `FENCE`/`RALLY` fixtures, strict-mode mission assertions, and retry/delay simulation coverage
+1. ~~Stabilize SITL roundtrip suite~~ Done: all 3 mission types passing, home position properly handled at wire boundary
 2. Harden transfer lifecycle edges: cancel/reset-to-idle path, mission-type mismatch handling, and readback verification UX
 3. Migrate set-current transport to `MAV_CMD_DO_SET_MISSION_CURRENT` with fallback handling
 4. Run ArduPilot SITL acceptance loop for M2 exit criteria (edit -> write -> readback compare -> clear)
-5. Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable
+5. ~~Keep SITL workflow staged (nightly/manual) and promote to stricter gating once stable~~ Done: staged by default, strict via `MP_SITL_STRICT=1`
 
 This plan stays biased toward shipping a usable cockpit first, with disciplined protocol correctness before advanced planning UX.

@@ -1,8 +1,9 @@
 use mavlink::common;
 use mavlink::{connect, MavConnection, MavHeader};
 use mp_mission_core::{
-    normalize_for_compare, plans_equivalent, CompareTolerance, MissionFrame, MissionItem,
-    MissionPlan, MissionTransferMachine, MissionType, RetryPolicy, TransferError, TransferProgress,
+    items_for_wire_upload, normalize_for_compare, plan_from_wire_download, plans_equivalent,
+    CompareTolerance, MissionFrame, MissionItem, MissionPlan, MissionTransferMachine, MissionType,
+    RetryPolicy, TransferError, TransferProgress,
 };
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub struct TelemetryEvent {
     pub fuel_pct: Option<f64>,
     pub heading_deg: Option<f64>,
     pub fix_type: Option<u8>,
+    pub latitude_deg: Option<f64>,
+    pub longitude_deg: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +66,14 @@ pub struct MissionStateEvent {
     pub mission_id: u32,
     pub fence_id: u32,
     pub rally_points_id: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HomePositionEvent {
+    pub session_id: String,
+    pub latitude_deg: f64,
+    pub longitude_deg: f64,
+    pub altitude_m: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +93,7 @@ pub enum CoreEvent {
     MissionProgress(TransferProgress),
     MissionError(TransferError),
     MissionState(MissionStateEvent),
+    HomePosition(HomePositionEvent),
 }
 
 struct SessionHandle {
@@ -205,8 +217,11 @@ impl LinkManager {
     ) -> Result<bool, String> {
         self.mission_upload(session_id, plan.clone())?;
         let readback = self.mission_download(session_id, plan.mission_type)?;
-        let lhs = normalize_for_compare(&plan);
-        let rhs = normalize_for_compare(&readback);
+        let mut lhs = normalize_for_compare(&plan);
+        let mut rhs = normalize_for_compare(&readback);
+        // Autopilot may overwrite home position; compare items only
+        lhs.home = None;
+        rhs.home = None;
         Ok(plans_equivalent(&lhs, &rhs, CompareTolerance::default()))
     }
 
@@ -287,6 +302,7 @@ fn run_session(
 
     let mut aggregate = TelemetryAggregate::default();
     let mut vehicle_target: Option<VehicleTarget> = None;
+    let mut home_requested = false;
 
     while !stop_flag.load(Ordering::Relaxed) {
         if let Ok(command) = command_rx.try_recv() {
@@ -305,10 +321,36 @@ fn run_session(
         match connection.try_recv() {
             Ok((header, message)) => {
                 update_vehicle_target(&mut vehicle_target, &header, &message);
+                if !home_requested {
+                    if let Some(ref target) = vehicle_target {
+                        let _ = connection.send(
+                            &MavHeader {
+                                system_id: GCS_SYSTEM_ID,
+                                component_id: GCS_COMPONENT_ID,
+                                sequence: 0,
+                            },
+                            &common::MavMessage::COMMAND_LONG(common::COMMAND_LONG_DATA {
+                                target_system: target.system_id,
+                                target_component: target.component_id,
+                                command: common::MavCmd::MAV_CMD_REQUEST_MESSAGE,
+                                confirmation: 0,
+                                param1: 242.0,
+                                param2: 0.0,
+                                param3: 0.0,
+                                param4: 0.0,
+                                param5: 0.0,
+                                param6: 0.0,
+                                param7: 0.0,
+                            }),
+                        );
+                        home_requested = true;
+                    }
+                }
                 if aggregate.apply_message(message.clone()) {
                     emit_telemetry(&event_tx, &session_id, &aggregate);
                 }
                 maybe_emit_mission_state(&event_tx, &session_id, &message);
+                maybe_emit_home_position(&event_tx, &session_id, &message);
             }
             Err(err) => {
                 if is_non_fatal_read_error(&err) {
@@ -482,12 +524,18 @@ fn mission_upload_internal(
         return Err(format!("{}: {}", issue.code, issue.message));
     }
 
+    let wire_items = items_for_wire_upload(&plan);
+
     let target = vehicle_target
         .as_ref()
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
         .clone();
 
-    let mut machine = MissionTransferMachine::new_upload(&plan, RetryPolicy::default());
+    let mut machine = MissionTransferMachine::new_upload(
+        plan.mission_type,
+        wire_items.len() as u16,
+        RetryPolicy::default(),
+    );
     emit_mission_progress(event_tx, machine.progress());
     let mav_mission_type = to_mav_mission_type(plan.mission_type);
 
@@ -495,7 +543,7 @@ fn mission_upload_internal(
         send_message(
             connection,
             common::MavMessage::MISSION_COUNT(common::MISSION_COUNT_DATA {
-                count: plan.items.len() as u16,
+                count: wire_items.len() as u16,
                 target_system: target.system_id,
                 target_component: target.component_id,
                 mission_type: mav_mission_type,
@@ -506,7 +554,7 @@ fn mission_upload_internal(
 
     send_count(connection)?;
 
-    if plan.items.is_empty() {
+    if wire_items.is_empty() {
         loop {
             match wait_for_ack(
                 session_id,
@@ -569,7 +617,13 @@ fn mission_upload_internal(
                 if data.mission_type != mav_mission_type {
                     continue;
                 }
-                send_requested_item(connection, &plan, target, plan.mission_type, data.seq)?;
+                send_requested_item(
+                    connection,
+                    &wire_items,
+                    target,
+                    plan.mission_type,
+                    data.seq,
+                )?;
                 if acknowledged.insert(data.seq) {
                     machine.on_item_transferred();
                     emit_mission_progress(event_tx, machine.progress());
@@ -579,7 +633,13 @@ fn mission_upload_internal(
                 if data.mission_type != mav_mission_type {
                     continue;
                 }
-                send_requested_item(connection, &plan, target, plan.mission_type, data.seq)?;
+                send_requested_item(
+                    connection,
+                    &wire_items,
+                    target,
+                    plan.mission_type,
+                    data.seq,
+                )?;
                 if acknowledged.insert(data.seq) {
                     machine.on_item_transferred();
                     emit_mission_progress(event_tx, machine.progress());
@@ -779,10 +839,7 @@ fn mission_download_internal(
     machine.on_ack_success();
     emit_mission_progress(event_tx, machine.progress());
 
-    Ok(MissionPlan {
-        mission_type,
-        items,
-    })
+    Ok(plan_from_wire_download(mission_type, items))
 }
 
 fn mission_clear_internal(
@@ -799,13 +856,8 @@ fn mission_clear_internal(
         .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
         .clone();
 
-    let mut machine = MissionTransferMachine::new_upload(
-        &MissionPlan {
-            mission_type,
-            items: Vec::new(),
-        },
-        RetryPolicy::default(),
-    );
+    let mut machine =
+        MissionTransferMachine::new_upload(mission_type, 0, RetryPolicy::default());
     emit_mission_progress(event_tx, machine.progress());
     let mav_mission_type = to_mav_mission_type(mission_type);
 
@@ -890,13 +942,12 @@ fn wait_for_ack(
 
 fn send_requested_item(
     connection: &mut impl MavConnection<common::MavMessage>,
-    plan: &MissionPlan,
+    wire_items: &[MissionItem],
     target: VehicleTarget,
     mission_type: MissionType,
     seq: u16,
 ) -> Result<(), String> {
-    let item = plan
-        .items
+    let item = wire_items
         .get(seq as usize)
         .ok_or_else(|| format!("requested mission item {seq} out of range"))?;
 
@@ -952,6 +1003,7 @@ where
                     emit_telemetry(event_tx, session_id, aggregate);
                 }
                 maybe_emit_mission_state(event_tx, session_id, &message);
+                maybe_emit_home_position(event_tx, session_id, &message);
                 if predicate(&message) {
                     return Ok(message);
                 }
@@ -1013,6 +1065,21 @@ fn maybe_emit_mission_state(
             mission_id: data.mission_id,
             fence_id: data.fence_id,
             rally_points_id: data.rally_points_id,
+        }));
+    }
+}
+
+fn maybe_emit_home_position(
+    event_tx: &mpsc::Sender<CoreEvent>,
+    session_id: &str,
+    message: &common::MavMessage,
+) {
+    if let common::MavMessage::HOME_POSITION(data) = message {
+        let _ = event_tx.send(CoreEvent::HomePosition(HomePositionEvent {
+            session_id: session_id.to_string(),
+            latitude_deg: data.latitude as f64 / 1e7,
+            longitude_deg: data.longitude as f64 / 1e7,
+            altitude_m: data.altitude as f64 / 1000.0,
         }));
     }
 }
@@ -1223,6 +1290,8 @@ fn emit_telemetry(
         fuel_pct: aggregate.fuel_pct,
         heading_deg: aggregate.heading_deg,
         fix_type: aggregate.fix_type,
+        latitude_deg: aggregate.latitude_deg,
+        longitude_deg: aggregate.longitude_deg,
     }));
 }
 
@@ -1240,6 +1309,8 @@ struct TelemetryAggregate {
     fuel_pct: Option<f64>,
     heading_deg: Option<f64>,
     fix_type: Option<u8>,
+    latitude_deg: Option<f64>,
+    longitude_deg: Option<f64>,
 }
 
 impl TelemetryAggregate {
@@ -1253,6 +1324,8 @@ impl TelemetryAggregate {
             }
             common::MavMessage::GLOBAL_POSITION_INT(data) => {
                 self.altitude_m = Some(data.relative_alt as f64 / 1000.0);
+                self.latitude_deg = Some(data.lat as f64 / 1e7);
+                self.longitude_deg = Some(data.lon as f64 / 1e7);
                 let vx = data.vx as f64 / 100.0;
                 let vy = data.vy as f64 / 100.0;
                 self.speed_mps = Some((vx * vx + vy * vy).sqrt());
@@ -1414,6 +1487,26 @@ mod tests {
         })
     }
 
+    fn home_item_int(seq: u16) -> common::MavMessage {
+        common::MavMessage::MISSION_ITEM_INT(common::MISSION_ITEM_INT_DATA {
+            param1: 0.0,
+            param2: 0.0,
+            param3: 0.0,
+            param4: 0.0,
+            x: 473_977_420,
+            y: 85_455_970,
+            z: 0.0,
+            seq,
+            command: common::MavCmd::MAV_CMD_NAV_WAYPOINT,
+            target_system: 255,
+            target_component: 190,
+            frame: common::MavFrame::MAV_FRAME_GLOBAL,
+            current: 0,
+            autocontinue: 1,
+            mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
+        })
+    }
+
     fn mission_current(seq: u16, total: u16) -> common::MavMessage {
         common::MavMessage::MISSION_CURRENT(common::MISSION_CURRENT_DATA {
             seq,
@@ -1439,6 +1532,9 @@ mod tests {
 
     #[test]
     fn upload_ignores_duplicate_request_progress() {
+        // Plan has 2 semantic items; wire conversion prepends home -> 3 wire items.
+        // Mock sends requests for seq 0 (home, duplicated), seq 1, then ACK
+        // arrives before seq 2 is requested (ACK inside request loop returns Ok).
         let messages = vec![
             common::MavMessage::MISSION_REQUEST_INT(common::MISSION_REQUEST_INT_DATA {
                 seq: 0,
@@ -1463,6 +1559,7 @@ mod tests {
         let mut connection = MockConnection::new(messages);
         let plan = MissionPlan {
             mission_type: MissionType::Mission,
+            home: None,
             items: vec![sample_item(0), sample_item(1)],
         };
         let (mut aggregate, mut vehicle_target, stop_flag) = base_inputs();
@@ -1493,6 +1590,7 @@ mod tests {
             .map(|progress| progress.completed_items)
             .max()
             .unwrap_or(0);
+        // 2 unique seqs acknowledged (0 and 1) out of 3 wire items; ACK arrived early
         assert_eq!(max_completed, 2);
 
         let sent_count = connection
@@ -1500,21 +1598,24 @@ mod tests {
             .into_iter()
             .filter(|message| matches!(message, common::MavMessage::MISSION_ITEM_INT(_)))
             .count();
+        // 3 sends: seq 0 twice (dup request), seq 1 once
         assert_eq!(sent_count, 3);
     }
 
     #[test]
     fn download_success_requests_each_item() {
+        // Wire: 3 items (home + 2 waypoints). Semantic result: 2 items + home.
         let messages = vec![
             common::MavMessage::MISSION_COUNT(common::MISSION_COUNT_DATA {
-                count: 2,
+                count: 3,
                 target_system: 255,
                 target_component: 190,
                 mission_type: common::MavMissionType::MAV_MISSION_TYPE_MISSION,
                 opaque_id: 0,
             }),
-            mission_item_int(0, MissionType::Mission),
+            home_item_int(0),
             mission_item_int(1, MissionType::Mission),
+            mission_item_int(2, MissionType::Mission),
             accepted_ack(MissionType::Mission),
         ];
         let mut connection = MockConnection::new(messages);
@@ -1533,6 +1634,7 @@ mod tests {
         .expect("download should succeed");
 
         assert_eq!(downloaded.items.len(), 2);
+        assert!(downloaded.home.is_some());
 
         let sent = connection.sent_messages();
         assert!(matches!(
@@ -1543,7 +1645,7 @@ mod tests {
             .iter()
             .filter(|message| matches!(message, common::MavMessage::MISSION_REQUEST_INT(_)))
             .count();
-        assert_eq!(request_items, 2);
+        assert_eq!(request_items, 3);
     }
 
     #[test]
@@ -1599,6 +1701,7 @@ mod tests {
 
         assert_eq!(downloaded.mission_type, MissionType::Fence);
         assert_eq!(downloaded.items.len(), 1);
+        assert!(downloaded.home.is_none());
     }
 
     #[test]
@@ -1675,5 +1778,36 @@ mod tests {
         assert_eq!(mission_states.len(), 1);
         assert_eq!(mission_states[0].current_seq, 2);
         assert_eq!(mission_states[0].total_items, 5);
+    }
+
+    #[test]
+    fn home_position_event_emitted() {
+        let home_msg = common::MavMessage::HOME_POSITION(common::HOME_POSITION_DATA {
+            latitude: 473977420,
+            longitude: 85455970,
+            altitude: 584000,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            q: [1.0, 0.0, 0.0, 0.0],
+            approach_x: 0.0,
+            approach_y: 0.0,
+            approach_z: 0.0,
+            time_usec: 0,
+        });
+        let (event_tx, event_rx) = mpsc::channel();
+        maybe_emit_home_position(&event_tx, "session-1", &home_msg);
+
+        let events: Vec<HomePositionEvent> = event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                CoreEvent::HomePosition(hp) => Some(hp),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(events.len(), 1);
+        assert!((events[0].latitude_deg - 47.397742).abs() < 0.001);
+        assert!((events[0].altitude_m - 584.0).abs() < 0.1);
     }
 }

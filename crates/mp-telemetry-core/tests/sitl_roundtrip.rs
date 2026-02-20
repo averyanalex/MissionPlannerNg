@@ -1,6 +1,6 @@
 use mp_mission_core::{
-    normalize_for_compare, plans_equivalent, CompareTolerance, MissionFrame, MissionItem,
-    MissionPlan, MissionType,
+    normalize_for_compare, plans_equivalent, CompareTolerance, HomePosition, MissionFrame,
+    MissionItem, MissionPlan, MissionType,
 };
 use mp_telemetry_core::{ConnectRequest, CoreEvent, LinkEndpoint, LinkManager, LinkStatus};
 use std::sync::mpsc;
@@ -12,7 +12,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 #[test]
 #[ignore = "requires ArduPilot SITL endpoint"]
 fn sitl_roundtrip_mission_type_mission() {
-    run_roundtrip_case(sample_plan_mission(MissionType::Mission));
+    run_roundtrip_case(sample_plan_mission());
 }
 
 #[test]
@@ -20,6 +20,7 @@ fn sitl_roundtrip_mission_type_mission() {
 fn sitl_roundtrip_mission_type_fence() {
     run_roundtrip_case(MissionPlan {
         mission_type: MissionType::Fence,
+        home: None,
         items: Vec::new(),
     });
 }
@@ -29,6 +30,7 @@ fn sitl_roundtrip_mission_type_fence() {
 fn sitl_roundtrip_mission_type_rally() {
     run_roundtrip_case(MissionPlan {
         mission_type: MissionType::Rally,
+        home: None,
         items: Vec::new(),
     });
 }
@@ -89,11 +91,21 @@ fn run_roundtrip_case(plan: MissionPlan) {
             Err(err) => return Err(err),
         };
 
-        let expected = normalize_for_compare(&plan);
-        let got = normalize_for_compare(&strip_home_placeholder_for_compare(
-            plan.mission_type,
-            downloaded,
-        ));
+        // For Mission type, verify home was extracted and compare items only
+        // (autopilot may overwrite home coords).
+        if plan.mission_type == MissionType::Mission {
+            assert!(
+                downloaded.home.is_some(),
+                "downloaded Mission plan should have home extracted from wire seq 0"
+            );
+        }
+
+        let mut expected = normalize_for_compare(&plan);
+        let mut got = normalize_for_compare(&downloaded);
+        // Strip home for comparison since autopilot may overwrite it
+        expected.home = None;
+        got.home = None;
+
         if !plans_equivalent(&expected, &got, CompareTolerance::default()) {
             return Err(format!(
                 "readback mismatch for {:?}: expected {:?}, got {:?}",
@@ -210,7 +222,9 @@ fn mission_download_with_retries(
     Err(format!(
         "failed to download {:?} plan after retries: {}",
         mission_type,
-        last_error.clone().unwrap_or_else(|| String::from("unknown error"))
+        last_error
+            .clone()
+            .unwrap_or_else(|| String::from("unknown error"))
     ))
     .or_else(|err| {
         if !strict
@@ -226,35 +240,14 @@ fn mission_download_with_retries(
     })
 }
 
-fn strip_home_placeholder_for_compare(
-    mission_type: MissionType,
-    mut plan: MissionPlan,
-) -> MissionPlan {
-    if mission_type == MissionType::Mission && plan.items.len() > 1 {
-        let remove = plan.items.first().is_some_and(|item| {
-            item.seq == 0
-                && item.command == 16
-                && item.frame == MissionFrame::GlobalInt
-                && !item.current
-        });
-
-        if remove {
-            plan.items.remove(0);
-            for (index, item) in plan.items.iter_mut().enumerate() {
-                item.seq = index as u16;
-                if index == 0 {
-                    item.current = true;
-                }
-            }
-        }
-    }
-
-    plan
-}
-
-fn sample_plan_mission(mission_type: MissionType) -> MissionPlan {
+fn sample_plan_mission() -> MissionPlan {
     MissionPlan {
-        mission_type,
+        mission_type: MissionType::Mission,
+        home: Some(HomePosition {
+            latitude_deg: 47.397742,
+            longitude_deg: 8.545594,
+            altitude_m: 0.0,
+        }),
         items: vec![
             waypoint(0, 47.397742, 8.545594, 25.0),
             waypoint(1, 47.398100, 8.546100, 30.0),

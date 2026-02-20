@@ -6,6 +6,7 @@ import {
   subscribeMissionState,
   setCurrentMissionItem,
   subscribeMissionProgress,
+  type HomePosition,
   type MissionState,
   uploadMissionPlan,
   validateMissionPlan,
@@ -22,6 +23,7 @@ import {
   disconnectLink,
   listSerialPorts,
   subscribeLinkState,
+  subscribeHomePosition,
   subscribeTelemetry,
   type ConnectRequest,
   type LinkStateEvent,
@@ -36,6 +38,7 @@ const emptyTelemetry: Telemetry = {
 };
 
 type ActiveTab = "flight" | "planner";
+type HomeSource = "vehicle" | "user" | "download" | null;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("flight");
@@ -60,11 +63,17 @@ export default function App() {
   const [missionProgress, setMissionProgress] = useState<TransferProgress | null>(null);
   const [missionTransferError, setMissionTransferError] = useState<TransferError | null>(null);
   const [missionState, setMissionState] = useState<MissionState | null>(null);
+  const [homePosition, setHomePosition] = useState<HomePosition | null>(null);
+  const [homeSource, setHomeSource] = useState<HomeSource>(null);
+  const [homeLatInput, setHomeLatInput] = useState("");
+  const [homeLonInput, setHomeLonInput] = useState("");
+  const [homeAltInput, setHomeAltInput] = useState("");
   const browserMockTimer = useRef<number | null>(null);
 
   useEffect(() => {
     let stopTelemetry: (() => void) | null = null;
     let stopLinkState: (() => void) | null = null;
+    let stopHome: (() => void) | null = null;
 
     (async () => {
       try {
@@ -81,6 +90,27 @@ export default function App() {
           }
           setLinkState(event);
         });
+
+        stopHome = await subscribeHomePosition((event) => {
+          if (sessionId !== null && event.session_id !== sessionId) {
+            return;
+          }
+          setHomeSource((current) => {
+            if (current === "user") {
+              return current;
+            }
+            const hp: HomePosition = {
+              latitude_deg: event.latitude_deg,
+              longitude_deg: event.longitude_deg,
+              altitude_m: event.altitude_m
+            };
+            setHomePosition(hp);
+            setHomeLatInput(event.latitude_deg.toFixed(6));
+            setHomeLonInput(event.longitude_deg.toFixed(6));
+            setHomeAltInput(event.altitude_m.toFixed(2));
+            return "vehicle";
+          });
+        });
       } catch {
         setSource("browser-mock");
       }
@@ -92,6 +122,9 @@ export default function App() {
       }
       if (stopLinkState) {
         stopLinkState();
+      }
+      if (stopHome) {
+        stopHome();
       }
       stopBrowserMock();
     };
@@ -175,15 +208,18 @@ export default function App() {
     }
   }
 
+  function buildMissionPlan(): MissionPlan {
+    return {
+      mission_type: missionType,
+      home: missionType === "mission" ? homePosition : null,
+      items: resequence(missionItems)
+    };
+  }
+
   async function handleValidateMission() {
     setError(null);
-    const plan: MissionPlan = {
-      mission_type: missionType,
-      items: missionItemsForTransfer(missionItems, missionType)
-    };
-
     try {
-      const issues = await validateMissionPlan(plan);
+      const issues = await validateMissionPlan(buildMissionPlan());
       setMissionIssues(issues);
     } catch (err) {
       setError(asErrorMessage(err));
@@ -196,13 +232,8 @@ export default function App() {
       setError("connect to vehicle before mission write");
       return;
     }
-    const plan: MissionPlan = {
-      mission_type: missionType,
-      items: missionItemsForTransfer(missionItems, missionType)
-    };
-
     try {
-      await uploadMissionPlan(sessionId, plan);
+      await uploadMissionPlan(sessionId, buildMissionPlan());
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -217,6 +248,13 @@ export default function App() {
     try {
       const downloaded = await downloadMissionPlan(sessionId, missionType);
       setMissionItems(downloaded.items);
+      if (downloaded.home) {
+        setHomePosition(downloaded.home);
+        setHomeLatInput(downloaded.home.latitude_deg.toFixed(6));
+        setHomeLonInput(downloaded.home.longitude_deg.toFixed(6));
+        setHomeAltInput(downloaded.home.altitude_m.toFixed(2));
+        setHomeSource("download");
+      }
       setSelectedMissionSeq(null);
       setMissionIssues([]);
       setRoundtripStatus("Downloaded sample plan");
@@ -234,6 +272,11 @@ export default function App() {
     try {
       await clearMissionPlan(sessionId, missionType);
       setMissionItems([]);
+      setHomePosition(null);
+      setHomeSource(null);
+      setHomeLatInput("");
+      setHomeLonInput("");
+      setHomeAltInput("");
       setSelectedMissionSeq(null);
       setMissionIssues([]);
       setRoundtripStatus("Cleared");
@@ -247,13 +290,8 @@ export default function App() {
       setError("connect to vehicle before verify");
       return;
     }
-    const plan: MissionPlan = {
-      mission_type: missionType,
-      items: missionItemsForTransfer(missionItems, missionType)
-    };
-
     try {
-      const ok = await verifyMissionRoundtrip(sessionId, plan);
+      const ok = await verifyMissionRoundtrip(sessionId, buildMissionPlan());
       setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
     } catch (err) {
       setError(asErrorMessage(err));
@@ -279,9 +317,6 @@ export default function App() {
   }
 
   function updateMissionField(index: number, field: "command" | "z" | "param1" | "param2", value: number) {
-    if (isReadonlyHomeItem(missionItems[index], index, missionType)) {
-      return;
-    }
     setMissionItems((items) =>
       items.map((item, current) =>
         current === index
@@ -295,9 +330,6 @@ export default function App() {
   }
 
   function updateMissionCoordinate(index: number, field: "x" | "y", valueDeg: number) {
-    if (isReadonlyHomeItem(missionItems[index], index, missionType)) {
-      return;
-    }
     const encoded = Math.round(valueDeg * 1e7);
     setMissionItems((items) =>
       items.map((item, current) => (current === index ? { ...item, [field]: encoded } : item))
@@ -382,10 +414,52 @@ export default function App() {
     setSelectedMissionSeq(nextSelected);
   }
 
-  function deleteWaypointAt(index: number) {
-    if (index === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)) {
+  function handleUpdateHomeFromVehicle() {
+    if (missionType !== "mission") {
       return;
     }
+
+    const lat = telemetry.latitude_deg;
+    const lon = telemetry.longitude_deg;
+    if (typeof lat !== "number" || typeof lon !== "number" || Number.isNaN(lat) || Number.isNaN(lon)) {
+      setError("vehicle position unavailable; wait for GPS telemetry before updating home");
+      return;
+    }
+
+    const altitude =
+      typeof telemetry.altitude_m === "number" && !Number.isNaN(telemetry.altitude_m)
+        ? telemetry.altitude_m
+        : 0;
+
+    setHomePosition({ latitude_deg: lat, longitude_deg: lon, altitude_m: altitude });
+    setHomeSource("vehicle");
+    setHomeLatInput(lat.toFixed(6));
+    setHomeLonInput(lon.toFixed(6));
+    setHomeAltInput(altitude.toFixed(2));
+    setError(null);
+  }
+
+  function handleSetArbitraryHome() {
+    if (missionType !== "mission") {
+      return;
+    }
+    const lat = Number(homeLatInput);
+    const lon = Number(homeLonInput);
+    const alt = Number(homeAltInput || "0");
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(alt)) {
+      setError("home inputs must be valid numbers");
+      return;
+    }
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      setError("home coordinates out of range");
+      return;
+    }
+    setHomePosition({ latitude_deg: lat, longitude_deg: lon, altitude_m: alt });
+    setHomeSource("user");
+    setError(null);
+  }
+
+  function deleteWaypointAt(index: number) {
     setMissionItems((items) => {
       if (index < 0 || index >= items.length) {
         return items;
@@ -407,12 +481,6 @@ export default function App() {
 
   function moveWaypoint(fromIndex: number, toIndex: number) {
     if (fromIndex === toIndex) {
-      return;
-    }
-    if (
-      (fromIndex === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)) ||
-      (toIndex === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType))
-    ) {
       return;
     }
     setMissionItems((items) => {
@@ -594,7 +662,6 @@ export default function App() {
                 </button>
                 <button
                   className="secondary"
-                  disabled={selectedMissionSeq === 0 && isReadonlyHomeItem(missionItems[0], 0, missionType)}
                   onClick={() => deleteWaypointAt(selectedMissionSeq ?? missionItems.length - 1)}
                 >
                   Delete Selected
@@ -627,6 +694,13 @@ export default function App() {
                 <button onClick={handleSimulateMissionUpload}>Write</button>
                 <button onClick={handleSimulateMissionDownload}>Read</button>
                 <button onClick={handleVerifyRoundtrip}>Verify</button>
+                <button
+                  className="secondary"
+                  disabled={missionType !== "mission"}
+                  onClick={handleUpdateHomeFromVehicle}
+                >
+                  Update Home from Vehicle
+                </button>
                 <button className="secondary" onClick={handleSimulateMissionClear}>
                   Clear
                 </button>
@@ -646,12 +720,48 @@ export default function App() {
                   <option value="fence">Fence</option>
                   <option value="rally">Rally</option>
                 </select>
+                {missionType === "mission" ? (
+                  <>
+                    <label className="inline-label">Home Lat</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={homeLatInput}
+                      onChange={(event) => setHomeLatInput(event.target.value)}
+                    />
+                    <label className="inline-label">Home Lon</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={homeLonInput}
+                      onChange={(event) => setHomeLonInput(event.target.value)}
+                    />
+                    <label className="inline-label">Home Alt</label>
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={homeAltInput}
+                      onChange={(event) => setHomeAltInput(event.target.value)}
+                    />
+                    <button className="secondary" onClick={handleSetArbitraryHome}>
+                      Set Arbitrary Home
+                    </button>
+                  </>
+                ) : null}
                 <span className="roundtrip-status">{roundtripStatus}</span>
               </div>
 
+              {missionType === "mission" && homePosition ? (
+                <div className="home-info">
+                  Home: {homePosition.latitude_deg.toFixed(6)}, {homePosition.longitude_deg.toFixed(6)}, alt {homePosition.altitude_m.toFixed(1)}m
+                  {homeSource ? ` (${homeSource})` : ""}
+                </div>
+              ) : null}
+
               <div className="planner-workspace">
                 <MissionMap
-                  missionItems={missionItems.filter((item, index) => !isReadonlyHomeItem(item, index, missionType))}
+                  missionItems={missionItems}
+                  homePosition={missionType === "mission" ? homePosition : null}
                   selectedSeq={selectedMissionSeq}
                   onAddWaypoint={addWaypointAt}
                   onSelectSeq={setSelectedMissionSeq}
@@ -661,7 +771,7 @@ export default function App() {
                   <table className="mission-table">
                     <thead>
                       <tr>
-                        <th>Seq</th>
+                        <th>#</th>
                         <th>Cmd</th>
                         <th>Lat</th>
                         <th>Lon</th>
@@ -671,32 +781,25 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {missionItems.map((item, index) => {
-                        const isHome = isReadonlyHomeItem(item, index, missionType);
-                        return (
+                      {missionItems.map((item, index) => (
                         <tr
                           key={item.seq}
-                          className={`${selectedMissionSeq === item.seq ? "is-selected" : ""} ${isHome ? "is-home-row" : ""}`}
+                          className={selectedMissionSeq === item.seq ? "is-selected" : ""}
                           onClick={() => setSelectedMissionSeq(item.seq)}
                         >
-                          <td>{item.seq}</td>
+                          <td>{item.seq + 1}</td>
                           <td>
-                            {isHome ? (
-                              <input type="text" value="HOME" readOnly />
-                            ) : (
-                              <input
-                                type="number"
-                                value={item.command}
-                                onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
-                              />
-                            )}
+                            <input
+                              type="number"
+                              value={item.command}
+                              onChange={(event) => updateMissionField(index, "command", Number(event.target.value) || 16)}
+                            />
                           </td>
                           <td>
                             <input
                               type="number"
                               step="0.000001"
                               value={(item.x / 1e7).toFixed(6)}
-                              readOnly={isHome}
                               onChange={(event) => updateMissionCoordinate(index, "x", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -705,7 +808,6 @@ export default function App() {
                               type="number"
                               step="0.000001"
                               value={(item.y / 1e7).toFixed(6)}
-                              readOnly={isHome}
                               onChange={(event) => updateMissionCoordinate(index, "y", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -713,7 +815,6 @@ export default function App() {
                             <input
                               type="number"
                               value={item.z}
-                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "z", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -721,7 +822,6 @@ export default function App() {
                             <input
                               type="number"
                               value={item.param1}
-                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "param1", Number(event.target.value) || 0)}
                             />
                           </td>
@@ -729,13 +829,11 @@ export default function App() {
                             <input
                               type="number"
                               value={item.param2}
-                              readOnly={isHome}
                               onChange={(event) => updateMissionField(index, "param2", Number(event.target.value) || 0)}
                             />
                           </td>
                         </tr>
-                        );
-                      })}
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -805,22 +903,6 @@ function createWaypoint(seq: number, latDeg: number, lonDeg: number, altitudeM: 
 
 function resequence(items: MissionItem[]): MissionItem[] {
   return items.map((item, index) => ({ ...item, seq: index, current: index === 0 }));
-}
-
-function missionItemsForTransfer(items: MissionItem[], missionType: MissionType): MissionItem[] {
-  return missionType === "mission" ? [...items] : resequence(items);
-}
-
-function isReadonlyHomeItem(item: MissionItem | undefined, index: number, missionType: MissionType): boolean {
-  if (!item) {
-    return false;
-  }
-  return (
-    missionType === "mission" &&
-    index === 0 &&
-    item.command === 16 &&
-    item.frame === "global_int"
-  );
 }
 
 function formatMaybe(value?: number) {

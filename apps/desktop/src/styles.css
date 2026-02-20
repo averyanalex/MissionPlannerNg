@@ -215,6 +215,15 @@ body,
   padding: 6px 10px;
 }
 
+.planner-actions input {
+  width: 118px;
+  border: 1px solid #3a5068;
+  border-radius: 4px;
+  background: #162332;
+  color: #d7e6f6;
+  padding: 6px 8px;
+}
+
 .inline-label {
   color: #a9bfd4;
   align-self: center;
@@ -263,6 +272,10 @@ body,
   transform: scale(1.08);
 }
 
+.mission-pin.is-home {
+  background: #57e38b;
+}
+
 .mission-table {
   width: 100%;
   border-collapse: collapse;
@@ -287,10 +300,6 @@ body,
 
 .mission-table tbody tr.is-selected td {
   background: #203246;
-}
-
-.mission-table tbody tr.is-home-row td {
-  background: #1b2a38;
 }
 
 .mission-table input[readonly] {

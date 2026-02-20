@@ -1,4 +1,4 @@
-use crate::{MissionPlan, MissionType};
+use crate::MissionType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,12 +72,12 @@ pub struct MissionTransferMachine {
 }
 
 impl MissionTransferMachine {
-    pub fn new_upload(plan: &MissionPlan, policy: RetryPolicy) -> Self {
+    pub fn new_upload(mission_type: MissionType, total_items: u16, policy: RetryPolicy) -> Self {
         Self {
             direction: TransferDirection::Upload,
-            mission_type: plan.mission_type,
+            mission_type,
             phase: TransferPhase::RequestCount,
-            total_items: plan.items.len() as u16,
+            total_items,
             completed_items: 0,
             retries_used: 0,
             policy,
@@ -206,6 +206,7 @@ mod tests {
         }
         MissionPlan {
             mission_type: MissionType::Mission,
+            home: None,
             items,
         }
     }
@@ -213,7 +214,11 @@ mod tests {
     #[test]
     fn upload_flow_reaches_completed_state() {
         let plan = sample_plan(2);
-        let mut machine = MissionTransferMachine::new_upload(&plan, RetryPolicy::default());
+        let mut machine = MissionTransferMachine::new_upload(
+            plan.mission_type,
+            plan.items.len() as u16,
+            RetryPolicy::default(),
+        );
 
         assert_eq!(machine.progress().phase, TransferPhase::RequestCount);
         machine.on_item_transferred();
@@ -228,7 +233,8 @@ mod tests {
     fn timeout_beyond_retry_budget_fails_transfer() {
         let plan = sample_plan(1);
         let mut machine = MissionTransferMachine::new_upload(
-            &plan,
+            plan.mission_type,
+            plan.items.len() as u16,
             RetryPolicy {
                 max_retries: 1,
                 ..RetryPolicy::default()

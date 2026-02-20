@@ -5,7 +5,7 @@ import maplibregl, {
   type Marker,
   type MapMouseEvent
 } from "maplibre-gl";
-import type { MissionItem } from "../mission";
+import type { HomePosition, MissionItem } from "../mission";
 
 const DEFAULT_CENTER: [number, number] = [8.545594, 47.397742];
 const DEFAULT_ZOOM = 13;
@@ -19,15 +19,17 @@ const LINE_LAYER_ID = "mission-line";
 
 type MissionMapProps = {
   missionItems: MissionItem[];
+  homePosition: HomePosition | null;
   selectedSeq: number | null;
   onAddWaypoint: (latDeg: number, lonDeg: number) => void;
   onSelectSeq: (seq: number | null) => void;
 };
 
-export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectSeq }: MissionMapProps) {
+export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq }: MissionMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<number, Marker>>(new Map());
+  const homeMarkerRef = useRef<Marker | null>(null);
   const hasSetInitialViewport = useRef(false);
   const onAddWaypointRef = useRef(onAddWaypoint);
   const onSelectSeqRef = useRef(onSelectSeq);
@@ -42,7 +44,16 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
   }, [onAddWaypoint, onSelectSeq]);
 
   const missionGeoJson = useMemo(() => {
-    const lineCoordinates = missionItems.map((item) => [item.y / 1e7, item.x / 1e7]);
+    const lineCoordinates: [number, number][] = [];
+
+    if (homePosition) {
+      lineCoordinates.push([homePosition.longitude_deg, homePosition.latitude_deg]);
+    }
+
+    for (const item of missionItems) {
+      lineCoordinates.push([item.y / 1e7, item.x / 1e7]);
+    }
+
     const features: any[] = [];
 
     if (lineCoordinates.length >= 2) {
@@ -62,7 +73,7 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
       type: "FeatureCollection" as const,
       features
     };
-  }, [missionItems]);
+  }, [missionItems, homePosition]);
 
   useEffect(() => {
     missionGeoJsonRef.current = missionGeoJson;
@@ -194,6 +205,10 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
         marker.remove();
       }
       markersRef.current.clear();
+      if (homeMarkerRef.current) {
+        homeMarkerRef.current.remove();
+        homeMarkerRef.current = null;
+      }
       map.remove();
       mapRef.current = null;
       hasSetInitialViewport.current = false;
@@ -213,6 +228,41 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
     source.setData(missionGeoJson);
   }, [missionGeoJson]);
 
+  // Update home marker
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    if (homePosition) {
+      const lngLat: [number, number] = [homePosition.longitude_deg, homePosition.latitude_deg];
+
+      if (homeMarkerRef.current) {
+        homeMarkerRef.current.setLngLat(lngLat);
+      } else {
+        const markerEl = document.createElement("button");
+        markerEl.type = "button";
+        markerEl.className = "mission-pin is-home";
+        markerEl.textContent = "H";
+        markerEl.addEventListener("click", (event) => {
+          event.stopPropagation();
+        });
+
+        homeMarkerRef.current = new maplibregl.Marker({
+          element: markerEl,
+          anchor: "bottom"
+        })
+          .setLngLat(lngLat)
+          .addTo(map);
+      }
+    } else if (homeMarkerRef.current) {
+      homeMarkerRef.current.remove();
+      homeMarkerRef.current = null;
+    }
+  }, [homePosition]);
+
+  // Update waypoint markers
   useEffect(() => {
     const map = mapRef.current;
     if (!map) {
@@ -260,20 +310,29 @@ export function MissionMap({ missionItems, selectedSeq, onAddWaypoint, onSelectS
     }
   }, [missionItems, selectedSeq]);
 
+  // Fit bounds on initial load
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || hasSetInitialViewport.current || missionItems.length === 0) {
+    if (!map || hasSetInitialViewport.current) {
+      return;
+    }
+
+    const hasItems = missionItems.length > 0 || homePosition !== null;
+    if (!hasItems) {
       return;
     }
 
     const bounds = new maplibregl.LngLatBounds();
+    if (homePosition) {
+      bounds.extend([homePosition.longitude_deg, homePosition.latitude_deg]);
+    }
     for (const item of missionItems) {
       bounds.extend([item.y / 1e7, item.x / 1e7]);
     }
 
     map.fitBounds(bounds, { padding: 48, maxZoom: 15, duration: 0 });
     hasSetInitialViewport.current = true;
-  }, [missionItems]);
+  }, [missionItems, homePosition]);
 
   return <div className="mission-map" ref={containerRef} />;
 }

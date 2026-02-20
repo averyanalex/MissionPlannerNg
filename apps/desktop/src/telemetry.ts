@@ -29,6 +29,8 @@ export type Telemetry = {
   fuel_pct?: number;
   heading_deg?: number;
   fix_type?: number;
+  latitude_deg?: number;
+  longitude_deg?: number;
 };
 
 export async function connectLink(request: ConnectRequest): Promise<ConnectResponse> {
@@ -49,4 +51,15 @@ export async function subscribeTelemetry(cb: (telemetry: Telemetry) => void): Pr
 
 export async function subscribeLinkState(cb: (event: LinkStateEvent) => void): Promise<UnlistenFn> {
   return listen<LinkStateEvent>("link://state", (event) => cb(event.payload));
+}
+
+export type HomePositionEvent = {
+  session_id: string;
+  latitude_deg: number;
+  longitude_deg: number;
+  altitude_m: number;
+};
+
+export async function subscribeHomePosition(cb: (event: HomePositionEvent) => void): Promise<UnlistenFn> {
+  return listen<HomePositionEvent>("home://position", (event) => cb(event.payload));
 }

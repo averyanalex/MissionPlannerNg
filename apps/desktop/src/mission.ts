@@ -26,8 +26,15 @@ export type MissionItem = {
   z: number;
 };
 
+export type HomePosition = {
+  latitude_deg: number;
+  longitude_deg: number;
+  altitude_m: number;
+};
+
 export type MissionPlan = {
   mission_type: MissionType;
+  home: HomePosition | null;
   items: MissionItem[];
 };
 

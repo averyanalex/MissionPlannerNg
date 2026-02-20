@@ -4,8 +4,8 @@ use mp_mission_core::{
     validate_plan, MissionIssue, MissionPlan, MissionType, TransferError, TransferProgress,
 };
 use mp_telemetry_core::{
-    list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, LinkManager, LinkStateEvent,
-    MissionStateEvent, TelemetryEvent,
+    list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, HomePositionEvent, LinkManager,
+    LinkStateEvent, MissionStateEvent, TelemetryEvent,
 };
 use std::sync::mpsc;
 use std::sync::Mutex;
@@ -145,6 +145,9 @@ fn main() {
                         CoreEvent::MissionState(payload) => {
                             let _ = emit_mission_state_event(&app_handle, payload);
                         }
+                        CoreEvent::HomePosition(payload) => {
+                            let _ = emit_home_position_event(&app_handle, payload);
+                        }
                     }
                 }
             });
@@ -199,4 +202,11 @@ fn emit_mission_state_event(
     payload: MissionStateEvent,
 ) -> Result<(), tauri::Error> {
     app_handle.emit("mission.state", payload)
+}
+
+fn emit_home_position_event(
+    app_handle: &tauri::AppHandle,
+    payload: HomePositionEvent,
+) -> Result<(), tauri::Error> {
+    app_handle.emit("home://position", payload)
 }
