@@ -1,0 +1,14 @@
+{
+  "name": "missionplannerng",
+  "private": true,
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "frontend:typecheck": "npm run -w @mission/desktop typecheck",
+    "frontend:build": "npm run -w @mission/desktop build",
+    "rust:check": "cargo check --workspace",
+    "tauri:dev": "npm run -w @mission/desktop tauri dev",
+    "tauri:build": "npm run -w @mission/desktop tauri build"
+  }
+}
