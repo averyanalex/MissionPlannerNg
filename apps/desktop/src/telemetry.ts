@@ -19,6 +19,46 @@ export type Telemetry = {
   longitude_deg?: number;
   battery_pct?: number;
   gps_fix_type?: string;
+
+  // VFR_HUD
+  climb_rate_mps?: number;
+  throttle_pct?: number;
+  airspeed_mps?: number;
+
+  // SYS_STATUS
+  battery_voltage_v?: number;
+  battery_current_a?: number;
+
+  // GPS_RAW_INT
+  gps_satellites?: number;
+  gps_hdop?: number;
+
+  // ATTITUDE
+  roll_deg?: number;
+  pitch_deg?: number;
+  yaw_deg?: number;
+
+  // NAV_CONTROLLER_OUTPUT
+  wp_dist_m?: number;
+  nav_bearing_deg?: number;
+  target_bearing_deg?: number;
+  xtrack_error_m?: number;
+
+  // TERRAIN_REPORT
+  terrain_height_m?: number;
+  height_above_terrain_m?: number;
+
+  // BATTERY_STATUS
+  battery_voltage_cells?: number[];
+  energy_consumed_wh?: number;
+  battery_time_remaining_s?: number;
+
+  // RC_CHANNELS
+  rc_channels?: number[];
+  rc_rssi?: number;
+
+  // SERVO_OUTPUT_RAW
+  servo_outputs?: number[];
 };
 
 export type VehicleState = {

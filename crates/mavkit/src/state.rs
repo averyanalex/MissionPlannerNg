@@ -12,6 +12,7 @@ pub struct VehicleState {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Telemetry {
+    // Existing
     pub altitude_m: Option<f64>,
     pub speed_mps: Option<f64>,
     pub heading_deg: Option<f64>,
@@ -19,6 +20,46 @@ pub struct Telemetry {
     pub longitude_deg: Option<f64>,
     pub battery_pct: Option<f64>,
     pub gps_fix_type: Option<GpsFixType>,
+
+    // From VFR_HUD
+    pub climb_rate_mps: Option<f64>,
+    pub throttle_pct: Option<f64>,
+    pub airspeed_mps: Option<f64>,
+
+    // From SYS_STATUS
+    pub battery_voltage_v: Option<f64>,
+    pub battery_current_a: Option<f64>,
+
+    // From GPS_RAW_INT
+    pub gps_satellites: Option<u8>,
+    pub gps_hdop: Option<f64>,
+
+    // From ATTITUDE
+    pub roll_deg: Option<f64>,
+    pub pitch_deg: Option<f64>,
+    pub yaw_deg: Option<f64>,
+
+    // From NAV_CONTROLLER_OUTPUT
+    pub wp_dist_m: Option<f64>,
+    pub nav_bearing_deg: Option<f64>,
+    pub target_bearing_deg: Option<f64>,
+    pub xtrack_error_m: Option<f64>,
+
+    // From TERRAIN_REPORT
+    pub terrain_height_m: Option<f64>,
+    pub height_above_terrain_m: Option<f64>,
+
+    // From BATTERY_STATUS
+    pub battery_voltage_cells: Option<Vec<f64>>,
+    pub energy_consumed_wh: Option<f64>,
+    pub battery_time_remaining_s: Option<i32>,
+
+    // From RC_CHANNELS
+    pub rc_channels: Option<Vec<u16>>,
+    pub rc_rssi: Option<u8>,
+
+    // From SERVO_OUTPUT_RAW
+    pub servo_outputs: Option<Vec<u16>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

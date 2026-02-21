@@ -178,6 +178,9 @@ fn update_state(
                 t.altitude_m = Some(data.alt as f64);
                 t.speed_mps = Some(data.groundspeed as f64);
                 t.heading_deg = Some(data.heading as f64);
+                t.climb_rate_mps = Some(data.climb as f64);
+                t.throttle_pct = Some(data.throttle as f64);
+                t.airspeed_mps = Some(data.airspeed as f64);
             });
         }
         common::MavMessage::GLOBAL_POSITION_INT(data) => {
@@ -194,15 +197,27 @@ fn update_state(
             });
         }
         common::MavMessage::SYS_STATUS(data) => {
-            if data.battery_remaining >= 0 {
-                writers.telemetry.send_modify(|t| {
+            writers.telemetry.send_modify(|t| {
+                if data.battery_remaining >= 0 {
                     t.battery_pct = Some(data.battery_remaining as f64);
-                });
-            }
+                }
+                if data.voltage_battery != u16::MAX {
+                    t.battery_voltage_v = Some(data.voltage_battery as f64 / 1000.0);
+                }
+                if data.current_battery >= 0 {
+                    t.battery_current_a = Some(data.current_battery as f64 / 100.0);
+                }
+            });
         }
         common::MavMessage::GPS_RAW_INT(data) => {
             writers.telemetry.send_modify(|t| {
                 t.gps_fix_type = Some(GpsFixType::from_raw(data.fix_type as u8));
+                if data.satellites_visible != u8::MAX {
+                    t.gps_satellites = Some(data.satellites_visible);
+                }
+                if data.eph != u16::MAX {
+                    t.gps_hdop = Some(data.eph as f64 / 100.0);
+                }
             });
         }
         common::MavMessage::MISSION_CURRENT(data) => {
@@ -219,6 +234,97 @@ fn update_state(
                     longitude_deg: data.longitude as f64 / 1e7,
                     altitude_m: (data.altitude as f64 / 1000.0) as f32,
                 }));
+        }
+        common::MavMessage::ATTITUDE(data) => {
+            writers.telemetry.send_modify(|t| {
+                t.roll_deg = Some(data.roll.to_degrees() as f64);
+                t.pitch_deg = Some(data.pitch.to_degrees() as f64);
+                t.yaw_deg = Some(data.yaw.to_degrees() as f64);
+            });
+        }
+        common::MavMessage::NAV_CONTROLLER_OUTPUT(data) => {
+            writers.telemetry.send_modify(|t| {
+                t.wp_dist_m = Some(data.wp_dist as f64);
+                t.nav_bearing_deg = Some(data.nav_bearing as f64);
+                t.target_bearing_deg = Some(data.target_bearing as f64);
+                t.xtrack_error_m = Some(data.xtrack_error as f64);
+            });
+        }
+        common::MavMessage::TERRAIN_REPORT(data) => {
+            writers.telemetry.send_modify(|t| {
+                t.terrain_height_m = Some(data.terrain_height as f64);
+                t.height_above_terrain_m = Some(data.current_height as f64);
+            });
+        }
+        common::MavMessage::BATTERY_STATUS(data) => {
+            writers.telemetry.send_modify(|t| {
+                let cells: Vec<f64> = data
+                    .voltages
+                    .iter()
+                    .filter(|&&v| v != u16::MAX)
+                    .map(|&v| v as f64 / 1000.0)
+                    .collect();
+                if !cells.is_empty() {
+                    t.battery_voltage_cells = Some(cells);
+                }
+                if data.energy_consumed >= 0 {
+                    t.energy_consumed_wh = Some(data.energy_consumed as f64 / 36.0);
+                }
+                if data.time_remaining > 0 {
+                    t.battery_time_remaining_s = Some(data.time_remaining);
+                }
+            });
+        }
+        common::MavMessage::RC_CHANNELS(data) => {
+            writers.telemetry.send_modify(|t| {
+                let count = data.chancount.min(18) as usize;
+                let all = [
+                    data.chan1_raw,
+                    data.chan2_raw,
+                    data.chan3_raw,
+                    data.chan4_raw,
+                    data.chan5_raw,
+                    data.chan6_raw,
+                    data.chan7_raw,
+                    data.chan8_raw,
+                    data.chan9_raw,
+                    data.chan10_raw,
+                    data.chan11_raw,
+                    data.chan12_raw,
+                    data.chan13_raw,
+                    data.chan14_raw,
+                    data.chan15_raw,
+                    data.chan16_raw,
+                    data.chan17_raw,
+                    data.chan18_raw,
+                ];
+                t.rc_channels = Some(all[..count].to_vec());
+                if data.rssi != u8::MAX {
+                    t.rc_rssi = Some(data.rssi);
+                }
+            });
+        }
+        common::MavMessage::SERVO_OUTPUT_RAW(data) => {
+            writers.telemetry.send_modify(|t| {
+                t.servo_outputs = Some(vec![
+                    data.servo1_raw,
+                    data.servo2_raw,
+                    data.servo3_raw,
+                    data.servo4_raw,
+                    data.servo5_raw,
+                    data.servo6_raw,
+                    data.servo7_raw,
+                    data.servo8_raw,
+                    data.servo9_raw,
+                    data.servo10_raw,
+                    data.servo11_raw,
+                    data.servo12_raw,
+                    data.servo13_raw,
+                    data.servo14_raw,
+                    data.servo15_raw,
+                    data.servo16_raw,
+                ]);
+            });
         }
         _ => {
             trace!("unhandled message type");
