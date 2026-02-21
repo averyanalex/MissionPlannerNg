@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, {
   type GeoJSONSource,
   type Map as MapLibreMap,
@@ -38,6 +38,10 @@ export function MissionMap({
   onRightClick, onMoveWaypoint, onContextMenu, readOnly,
   vehiclePosition, currentMissionSeq, followVehicle,
 }: MissionMapProps) {
+  type MapLayer = "plan" | "hybrid" | "satellite";
+  const [mapLayer, setMapLayer] = useState<MapLayer>("plan");
+  const baseLayerIdsRef = useRef<string[]>([]);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<number, Marker>>(new Map());
@@ -96,26 +100,23 @@ export function MissionMap({
       container: containerRef.current,
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
-      pitch: 60,
+      pitch: 0,
       maxPitch: 85,
     });
 
     map.setStyle(BASE_STYLE_URL, {
       transformStyle: (_previousStyle, nextStyle) => {
         const style = nextStyle as any;
-        style.projection = { type: "globe" };
         style.sources = {
           ...style.sources,
           satelliteSource: { type: "raster", tiles: [SATELLITE_TILE_URL], tileSize: 256 },
-          terrainSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256 },
-          hillshadeSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256 },
+          terrainSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256, maxzoom: 15 },
+          hillshadeSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256, maxzoom: 15 },
         };
-        style.terrain = { source: "terrainSource", exaggeration: 1.5 };
-        style.sky = { "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 2, 0] };
 
         style.layers.push({
           id: "hills", type: "hillshade", source: "hillshadeSource",
-          layout: { visibility: "visible" },
+          layout: { visibility: "none" },
           paint: { "hillshade-shadow-color": "#473B24" },
         });
 
@@ -125,7 +126,7 @@ export function MissionMap({
         if (firstNonFillLayer) {
           style.layers.splice(style.layers.indexOf(firstNonFillLayer), 0, {
             id: "satellite", type: "raster", source: "satelliteSource",
-            layout: { visibility: "visible" },
+            layout: { visibility: "none" },
             paint: { "raster-opacity": 1 },
           });
         }
@@ -151,6 +152,12 @@ export function MissionMap({
       }
       const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
       if (source) source.setData(missionGeoJsonRef.current);
+
+      // Capture vector base layer IDs for toggling
+      const ownIds = new Set(["satellite", "hills", LINE_LAYER_ID]);
+      baseLayerIdsRef.current = map.getStyle().layers
+        .filter((l: any) => !ownIds.has(l.id))
+        .map((l: any) => l.id);
     });
 
     map.on("click", (event: MapMouseEvent) => {
@@ -187,6 +194,22 @@ export function MissionMap({
     const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
     if (source) source.setData(missionGeoJson);
   }, [missionGeoJson]);
+
+  // Toggle map layer style (plan / hybrid / satellite)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+
+    const showSat = mapLayer !== "plan";
+    const showVector = mapLayer !== "satellite";
+
+    try { map.setLayoutProperty("satellite", "visibility", showSat ? "visible" : "none"); } catch {}
+    try { map.setLayoutProperty("hills", "visibility", showSat ? "visible" : "none"); } catch {}
+
+    for (const id of baseLayerIdsRef.current) {
+      try { map.setLayoutProperty(id, "visibility", showVector ? "visible" : "none"); } catch {}
+    }
+  }, [mapLayer]);
 
   // Update home marker
   useEffect(() => {
@@ -324,5 +347,24 @@ export function MissionMap({
     hasSetInitialViewport.current = true;
   }, [missionItems, homePosition]);
 
-  return <div className="h-full w-full" ref={containerRef} />;
+  return (
+    <div className="relative h-full w-full">
+      <div className="h-full w-full" ref={containerRef} />
+      <div className="absolute top-3 left-3 z-10 flex overflow-hidden rounded-md border border-border-light bg-bg-primary/85 text-xs backdrop-blur-sm">
+        {(["plan", "hybrid", "satellite"] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setMapLayer(s)}
+            className={`px-3 py-1.5 font-medium capitalize ${
+              mapLayer === s
+                ? "bg-accent-blue text-white"
+                : "text-text-primary hover:bg-bg-tertiary"
+            }`}
+          >
+            {s === "plan" ? "Plan" : s === "hybrid" ? "Hybrid" : "Satellite"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
