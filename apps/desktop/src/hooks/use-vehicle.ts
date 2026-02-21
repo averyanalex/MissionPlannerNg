@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
   armVehicle,
   connectLink,
@@ -63,6 +63,23 @@ export function useVehicle() {
     return null;
   }, [telemetry.latitude_deg, telemetry.longitude_deg, telemetry.heading_deg]);
 
+  // Throttle telemetry setState to animation frame rate
+  const pendingTelemetry = useRef<Telemetry | null>(null);
+  const rafId = useRef<number>(0);
+
+  const onTelemetryEvent = useCallback((t: Telemetry) => {
+    pendingTelemetry.current = t;
+    if (!rafId.current) {
+      rafId.current = requestAnimationFrame(() => {
+        rafId.current = 0;
+        if (pendingTelemetry.current) {
+          setTelemetry(pendingTelemetry.current);
+          pendingTelemetry.current = null;
+        }
+      });
+    }
+  }, []);
+
   // Subscribe to telemetry events
   useEffect(() => {
     let stopTelemetry: (() => void) | null = null;
@@ -71,7 +88,7 @@ export function useVehicle() {
     let stopVehicleState: (() => void) | null = null;
 
     (async () => {
-      stopTelemetry = await subscribeTelemetry(setTelemetry);
+      stopTelemetry = await subscribeTelemetry(onTelemetryEvent);
       stopLinkState = await subscribeLinkState(setLinkState);
       stopHome = await subscribeHomePosition(setHomePosition);
       stopVehicleState = await subscribeVehicleState(setVehicleState);
@@ -82,8 +99,9 @@ export function useVehicle() {
       stopLinkState?.();
       stopHome?.();
       stopVehicleState?.();
+      if (rafId.current) cancelAnimationFrame(rafId.current);
     };
-  }, []);
+  }, [onTelemetryEvent]);
 
   // Fetch available modes when connected
   useEffect(() => {

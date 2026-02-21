@@ -12,7 +12,8 @@ const DEFAULT_ZOOM = 13;
 const BASE_STYLE_URL = "https://tiles.openfreemap.org/styles/bright";
 const SATELLITE_TILE_URL =
   "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/{z}/{y}/{x}.jpg";
-const DEM_TILESET_URL = "https://demotiles.maplibre.org/terrain-tiles/tiles.json";
+const DEM_TILE_URL =
+  "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
 const SOURCE_ID = "mission-items";
 const LINE_LAYER_ID = "mission-line";
@@ -106,10 +107,10 @@ export function MissionMap({
         style.sources = {
           ...style.sources,
           satelliteSource: { type: "raster", tiles: [SATELLITE_TILE_URL], tileSize: 256 },
-          terrainSource: { type: "raster-dem", url: DEM_TILESET_URL, tileSize: 256 },
-          hillshadeSource: { type: "raster-dem", url: DEM_TILESET_URL, tileSize: 256 },
+          terrainSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256 },
+          hillshadeSource: { type: "raster-dem", tiles: [DEM_TILE_URL], encoding: "terrarium", tileSize: 256 },
         };
-        style.terrain = { source: "terrainSource", exaggeration: 1.25 };
+        style.terrain = { source: "terrainSource", exaggeration: 1.5 };
         style.sky = { "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 2, 0] };
 
         style.layers.push({
@@ -135,7 +136,7 @@ export function MissionMap({
 
     map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "top-right");
     map.addControl(new maplibregl.GlobeControl(), "top-right");
-    map.addControl(new maplibregl.TerrainControl({ source: "terrainSource", exaggeration: 1.25 }), "top-right");
+    map.addControl(new maplibregl.TerrainControl({ source: "terrainSource", exaggeration: 1.5 }), "top-right");
 
     map.on("style.load", () => {
       if (!map.getSource(SOURCE_ID)) {

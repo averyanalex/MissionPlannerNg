@@ -5,6 +5,7 @@ use mavkit::{
     Telemetry, TransferProgress, Vehicle, VehicleState,
 };
 use serde::Deserialize;
+use std::time::Duration;
 use tauri::Emitter;
 
 struct AppState {
@@ -214,14 +215,23 @@ async fn mission_cancel(state: tauri::State<'_, AppState>) -> Result<(), String>
 // ---------------------------------------------------------------------------
 
 fn spawn_event_bridges(app: &tauri::AppHandle, vehicle: &Vehicle) {
-    // Telemetry
+    // Telemetry — throttled to 5 Hz to avoid flooding the IPC bridge
     {
         let mut rx = vehicle.telemetry();
         let handle = app.clone();
         tokio::spawn(async move {
-            while rx.changed().await.is_ok() {
-                let t: Telemetry = rx.borrow().clone();
-                let _ = handle.emit("telemetry://tick", &t);
+            let mut interval = tokio::time::interval(Duration::from_millis(200));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                match rx.has_changed() {
+                    Ok(true) => {
+                        let t: Telemetry = rx.borrow_and_update().clone();
+                        let _ = handle.emit("telemetry://tick", &t);
+                    }
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
             }
         });
     }
