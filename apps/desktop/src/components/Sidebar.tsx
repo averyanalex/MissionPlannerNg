@@ -165,12 +165,14 @@ export function Sidebar({ vehicle }: SidebarProps) {
             />
             <span className="text-xs text-text-muted">m</span>
             <Button variant="secondary" size="sm" className="flex-1" onClick={takeoff}
-              disabled={!connected || vehicleState?.mode_name?.toUpperCase() !== "GUIDED"}>
+              disabled={!connected || !vehicleState?.armed || vehicleState?.mode_name?.toUpperCase() !== "GUIDED"}>
               Takeoff
             </Button>
           </div>
-          {connected && vehicleState && vehicleState.mode_name?.toUpperCase() !== "GUIDED" && (
-            <p className="text-[10px] text-text-muted">Switch to GUIDED to enable takeoff</p>
+          {connected && vehicleState && (!vehicleState.armed || vehicleState.mode_name?.toUpperCase() !== "GUIDED") && (
+            <p className="text-[10px] text-text-muted">
+              {!vehicleState.armed ? "Arm vehicle" : "Switch to GUIDED"} to enable takeoff
+            </p>
           )}
 
           <div className="flex gap-1.5">
