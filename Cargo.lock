@@ -48,6 +48,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "atk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -284,6 +295,12 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -662,6 +679,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "errno"
+version = "0.3.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -755,12 +782,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b147ee9d1f6d097cef9ce628cd2ee62288d963e16fb287bd9286455b241382d"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07bbe89c50d7a535e539b8c17bc0b49bdb77747034daa8087407d655f3f7cc1d"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -815,6 +858,7 @@ version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -1647,6 +1691,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "libudev"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78b324152da65df7bb95acfcaab55e3097ceaab02fb19b228a9eb74d55f135e0"
+dependencies = [
+ "libc",
+ "libudev-sys",
+]
+
+[[package]]
+name = "libudev-sys"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8469b4a23b962c1396b9b451dda50ef5b283e8dd309d69033475fa9b334324"
+dependencies = [
+ "libc",
+ "pkg-config",
+]
+
+[[package]]
 name = "litemap"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1714,6 +1778,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2532096657941c2fea9c289d370a250971c689d4f143798ff67113ec042024a5"
 
 [[package]]
+name = "mavkit"
+version = "0.1.0"
+dependencies = [
+ "mavlink",
+ "num-traits",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "mavlink"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1748,11 +1825,15 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9e8f00fd8c85980548571d28ead126f320733bbe27684aa02f1787060d3264d"
 dependencies = [
+ "async-trait",
  "byteorder",
  "crc-any",
+ "futures",
  "serde",
  "serde_arrays",
  "serialport",
+ "tokio",
+ "tokio-serial",
 ]
 
 [[package]]
@@ -1793,38 +1874,34 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
 dependencies = [
  "libc",
+ "log",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mio-serial"
+version = "5.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "029e1f407e261176a983a6599c084efd322d9301028055c87174beac71397ba3"
+dependencies = [
+ "log",
+ "mio",
+ "nix 0.29.0",
+ "serialport",
+ "winapi",
 ]
 
 [[package]]
 name = "missionplanner_desktop"
 version = "0.1.0"
 dependencies = [
- "mp-mission-core",
- "mp-telemetry-core",
- "serde",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "mp-mission-core"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "mp-telemetry-core"
-version = "0.1.0"
-dependencies = [
- "mavlink",
- "mp-mission-core",
- "num-traits",
+ "mavkit",
  "serde",
  "serialport",
- "uuid",
+ "tauri",
+ "tauri-build",
+ "tokio",
 ]
 
 [[package]]
@@ -1892,6 +1969,18 @@ checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.11.0",
+ "cfg-if",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -3013,8 +3102,9 @@ dependencies = [
  "core-foundation",
  "core-foundation-sys",
  "io-kit-sys",
+ "libudev",
  "mach2",
- "nix",
+ "nix 0.26.4",
  "quote",
  "scopeguard",
  "unescaper",
@@ -3047,6 +3137,16 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
 
 [[package]]
 name = "simd-adler32"
@@ -3612,9 +3712,37 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
+ "parking_lot",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
+ "tokio-macros",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tokio-macros"
+version = "2.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af407857209536a95c8e56f8231ef2c2e2aff839b22e07a1ffcbc617e9db9fa5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "tokio-serial"
+version = "5.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa1d5427f11ba7c5e6384521cfd76f2d64572ff29f3f4f7aa0f496282923fdc8"
+dependencies = [
+ "cfg-if",
+ "futures",
+ "log",
+ "mio-serial",
+ "serialport",
+ "tokio",
 ]
 
 [[package]]
@@ -3626,6 +3754,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
@@ -3778,7 +3907,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63e71662fa4b2a2c3a26f570f037eb95bb1f85397f3cd8076caed2f026a6d100"
 dependencies = [
  "pin-project-lite",
+ "tracing-attributes",
  "tracing-core",
+]
+
+[[package]]
+name = "tracing-attributes"
+version = "0.1.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7490cfa5ec963746568740651ac6781f701c9c5ea257c58e057f3ba8cf69e8da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

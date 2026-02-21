@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   cancelMissionTransfer,
   clearMissionPlan,
   downloadMissionPlan,
-  subscribeMissionError,
   subscribeMissionState,
   setCurrentMissionItem,
   subscribeMissionProgress,
@@ -16,7 +15,6 @@ import {
   type MissionItem,
   type MissionPlan,
   type MissionType,
-  type TransferError,
   type TransferProgress
 } from "./mission";
 import {
@@ -35,33 +33,26 @@ import {
   vehicleTakeoff,
   type ConnectRequest,
   type FlightModeEntry,
-  type LinkStateEvent,
+  type LinkState,
   type Telemetry,
-  type VehicleStateEvent
+  type VehicleState
 } from "./telemetry";
 import { MissionMap } from "./components/MissionMap";
 import "./styles.css";
-
-const emptyTelemetry: Telemetry = {
-  session_id: "",
-  ts: 0
-};
 
 type ActiveTab = "flight" | "planner";
 type HomeSource = "vehicle" | "user" | "download" | null;
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("flight");
-  const [telemetry, setTelemetry] = useState<Telemetry>(emptyTelemetry);
-  const [linkState, setLinkState] = useState<LinkStateEvent | null>(null);
+  const [telemetry, setTelemetry] = useState<Telemetry>({});
+  const [linkState, setLinkState] = useState<LinkState | null>(null);
   const [mode, setMode] = useState<"udp" | "serial">("udp");
   const [udpBind, setUdpBind] = useState("0.0.0.0:14550");
   const [serialPort, setSerialPort] = useState("");
   const [baud, setBaud] = useState(57600);
   const [serialPorts, setSerialPorts] = useState<string[]>([]);
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"tauri" | "browser-mock">("tauri");
   const [missionItems, setMissionItems] = useState<MissionItem[]>([
     createWaypoint(0, 47.397742, 8.545594, 25),
     createWaypoint(1, 47.3984, 8.5461, 30)
@@ -71,7 +62,6 @@ export default function App() {
   const [selectedMissionSeq, setSelectedMissionSeq] = useState<number | null>(null);
   const [roundtripStatus, setRoundtripStatus] = useState<string>("Not checked");
   const [missionProgress, setMissionProgress] = useState<TransferProgress | null>(null);
-  const [missionTransferError, setMissionTransferError] = useState<TransferError | null>(null);
   const [missionState, setMissionState] = useState<MissionState | null>(null);
   const [homePosition, setHomePosition] = useState<HomePosition | null>(null);
   const [homeSource, setHomeSource] = useState<HomeSource>(null);
@@ -79,10 +69,11 @@ export default function App() {
   const [homeLonInput, setHomeLonInput] = useState("");
   const [homeAltInput, setHomeAltInput] = useState("");
   const [followVehicle, setFollowVehicle] = useState(true);
-  const [vehicleState, setVehicleState] = useState<VehicleStateEvent | null>(null);
+  const [vehicleState, setVehicleState] = useState<VehicleState | null>(null);
   const [availableModes, setAvailableModes] = useState<FlightModeEntry[]>([]);
   const [takeoffAlt, setTakeoffAlt] = useState("10");
-  const browserMockTimer = useRef<number | null>(null);
+
+  const connected = linkState === "connected";
 
   const transferActive =
     missionProgress?.phase === "request_count" ||
@@ -106,51 +97,24 @@ export default function App() {
     let stopVehicleState: (() => void) | null = null;
 
     (async () => {
-      try {
-        stopTelemetry = await subscribeTelemetry((event) => {
-          if (sessionId !== null && event.session_id !== sessionId) {
-            return;
-          }
-          setTelemetry(event);
-        });
+      stopTelemetry = await subscribeTelemetry(setTelemetry);
 
-        stopLinkState = await subscribeLinkState((event) => {
-          if (sessionId !== null && event.session_id !== sessionId) {
-            return;
-          }
-          setLinkState(event);
-        });
+      stopLinkState = await subscribeLinkState(setLinkState);
 
-        stopHome = await subscribeHomePosition((event) => {
-          if (sessionId !== null && event.session_id !== sessionId) {
-            return;
+      stopHome = await subscribeHomePosition((hp) => {
+        setHomeSource((current) => {
+          if (current === "user") {
+            return current;
           }
-          setHomeSource((current) => {
-            if (current === "user") {
-              return current;
-            }
-            const hp: HomePosition = {
-              latitude_deg: event.latitude_deg,
-              longitude_deg: event.longitude_deg,
-              altitude_m: event.altitude_m
-            };
-            setHomePosition(hp);
-            setHomeLatInput(event.latitude_deg.toFixed(6));
-            setHomeLonInput(event.longitude_deg.toFixed(6));
-            setHomeAltInput(event.altitude_m.toFixed(2));
-            return "vehicle";
-          });
+          setHomePosition(hp);
+          setHomeLatInput(hp.latitude_deg.toFixed(6));
+          setHomeLonInput(hp.longitude_deg.toFixed(6));
+          setHomeAltInput(hp.altitude_m.toFixed(2));
+          return "vehicle";
         });
+      });
 
-        stopVehicleState = await subscribeVehicleState((event) => {
-          if (sessionId !== null && event.session_id !== sessionId) {
-            return;
-          }
-          setVehicleState(event);
-        });
-      } catch {
-        setSource("browser-mock");
-      }
+      stopVehicleState = await subscribeVehicleState(setVehicleState);
     })();
 
     return () => {
@@ -166,76 +130,66 @@ export default function App() {
       if (stopVehicleState) {
         stopVehicleState();
       }
-      stopBrowserMock();
     };
-  }, [sessionId]);
+  }, []);
 
   useEffect(() => {
     let stopProgress: (() => void) | null = null;
-    let stopError: (() => void) | null = null;
     let stopState: (() => void) | null = null;
 
     (async () => {
       stopProgress = await subscribeMissionProgress(setMissionProgress);
-      stopError = await subscribeMissionError(setMissionTransferError);
-      stopState = await subscribeMissionState((event) => {
-        if (sessionId === null || event.session_id === sessionId) {
-          setMissionState(event);
-        }
-      });
+      stopState = await subscribeMissionState(setMissionState);
     })();
 
     return () => {
       if (stopProgress) {
         stopProgress();
       }
-      if (stopError) {
-        stopError();
-      }
       if (stopState) {
         stopState();
       }
     };
-  }, [sessionId]);
+  }, []);
 
   useEffect(() => {
-    if (sessionId && vehicleState) {
-      getAvailableModes(sessionId).then(setAvailableModes).catch(() => {});
+    if (connected && vehicleState) {
+      getAvailableModes().then(setAvailableModes).catch(() => {});
     } else {
       setAvailableModes([]);
     }
-  }, [sessionId, vehicleState?.autopilot, vehicleState?.vehicle_type]);
+  }, [connected, vehicleState?.autopilot, vehicleState?.vehicle_type]);
 
   async function handleArm() {
-    if (!sessionId) { setError("connect first"); return; }
-    try { await armVehicle(sessionId, false); setError(null); }
+    if (!connected) { setError("connect first"); return; }
+    try { await armVehicle(false); setError(null); }
     catch (err) { setError(asErrorMessage(err)); }
   }
 
   async function handleDisarm() {
-    if (!sessionId) { setError("connect first"); return; }
-    try { await disarmVehicle(sessionId, false); setError(null); }
+    if (!connected) { setError("connect first"); return; }
+    try { await disarmVehicle(false); setError(null); }
     catch (err) { setError(asErrorMessage(err)); }
   }
 
   async function handleSetMode(customMode: number) {
-    if (!sessionId) { setError("connect first"); return; }
-    try { await setFlightMode(sessionId, customMode); setError(null); }
+    if (!connected) { setError("connect first"); return; }
+    try { await setFlightMode(customMode); setError(null); }
     catch (err) { setError(asErrorMessage(err)); }
   }
 
   async function handleTakeoff() {
-    if (!sessionId) { setError("connect first"); return; }
+    if (!connected) { setError("connect first"); return; }
     const alt = Number(takeoffAlt);
     if (!Number.isFinite(alt) || alt <= 0) { setError("invalid takeoff altitude"); return; }
-    try { await vehicleTakeoff(sessionId, alt); setError(null); }
+    try { await vehicleTakeoff(alt); setError(null); }
     catch (err) { setError(asErrorMessage(err)); }
   }
 
   async function handleGuidedGoto(latDeg: number, lonDeg: number) {
-    if (!sessionId) { setError("connect first"); return; }
+    if (!connected) { setError("connect first"); return; }
     const alt = telemetry.altitude_m ?? 25;
-    try { await vehicleGuidedGoto(sessionId, latDeg, lonDeg, alt); setError(null); }
+    try { await vehicleGuidedGoto(latDeg, lonDeg, alt); setError(null); }
     catch (err) { setError(asErrorMessage(err)); }
   }
 
@@ -259,7 +213,6 @@ export default function App() {
 
   async function handleConnect() {
     setError(null);
-    stopBrowserMock();
 
     const request: ConnectRequest =
       mode === "udp"
@@ -267,28 +220,15 @@ export default function App() {
         : { endpoint: { kind: "serial", port: serialPort, baud } };
 
     try {
-      const response = await connectLink(request);
-      setSessionId(response.session_id);
-      setSource("tauri");
+      await connectLink(request);
     } catch (err) {
-      if (source === "browser-mock") {
-        startBrowserMock();
-        return;
-      }
       setError(asErrorMessage(err));
     }
   }
 
   async function handleDisconnect() {
-    setError(null);
-    if (sessionId === null) {
-      stopBrowserMock();
-      return;
-    }
-
     try {
-      await disconnectLink(sessionId);
-      setSessionId(null);
+      await disconnectLink();
     } catch (err) {
       setError(asErrorMessage(err));
     }
@@ -313,28 +253,26 @@ export default function App() {
   }
 
   async function handleSimulateMissionUpload() {
-    setMissionTransferError(null);
     setMissionProgress(null);
-    if (sessionId === null) {
+    if (!connected) {
       setError("connect to vehicle before mission write");
       return;
     }
     try {
-      await uploadMissionPlan(sessionId, buildMissionPlan());
+      await uploadMissionPlan(buildMissionPlan());
     } catch (err) {
       setError(asErrorMessage(err));
     }
   }
 
   async function handleSimulateMissionDownload() {
-    setMissionTransferError(null);
     setMissionProgress(null);
-    if (sessionId === null) {
+    if (!connected) {
       setError("connect to vehicle before mission read");
       return;
     }
     try {
-      const downloaded = await downloadMissionPlan(sessionId, missionType);
+      const downloaded = await downloadMissionPlan(missionType);
       setMissionItems(downloaded.items);
       if (downloaded.home) {
         setHomePosition(downloaded.home);
@@ -352,14 +290,13 @@ export default function App() {
   }
 
   async function handleSimulateMissionClear() {
-    setMissionTransferError(null);
     setMissionProgress(null);
-    if (sessionId === null) {
+    if (!connected) {
       setError("connect to vehicle before mission clear");
       return;
     }
     try {
-      await clearMissionPlan(sessionId, missionType);
+      await clearMissionPlan(missionType);
       setMissionItems([]);
       setHomePosition(null);
       setHomeSource(null);
@@ -375,15 +312,14 @@ export default function App() {
   }
 
   async function handleVerifyRoundtrip() {
-    if (sessionId === null) {
+    if (!connected) {
       setError("connect to vehicle before verify");
       return;
     }
-    setMissionTransferError(null);
     setMissionProgress(null);
     setRoundtripStatus("Verifying...");
     try {
-      const ok = await verifyMissionRoundtrip(sessionId, buildMissionPlan());
+      const ok = await verifyMissionRoundtrip(buildMissionPlan());
       setRoundtripStatus(ok ? "Roundtrip compare: pass" : "Roundtrip compare: fail");
     } catch (err) {
       setRoundtripStatus("Verify failed");
@@ -392,19 +328,18 @@ export default function App() {
   }
 
   async function handleCancelTransfer() {
-    if (sessionId === null) {
+    if (!connected) {
       return;
     }
     try {
-      await cancelMissionTransfer(sessionId);
-      setMissionTransferError(null);
+      await cancelMissionTransfer();
     } catch (err) {
       setError(asErrorMessage(err));
     }
   }
 
   async function handleSetCurrentMissionItem() {
-    if (sessionId === null) {
+    if (!connected) {
       setError("connect to vehicle before set current");
       return;
     }
@@ -414,7 +349,7 @@ export default function App() {
     }
 
     try {
-      await setCurrentMissionItem(sessionId, selectedMissionSeq);
+      await setCurrentMissionItem(selectedMissionSeq);
       setError(null);
     } catch (err) {
       setError(asErrorMessage(err));
@@ -603,52 +538,6 @@ export default function App() {
     setSelectedMissionSeq(toIndex);
   }
 
-  function startBrowserMock() {
-    setSessionId("browser-mock");
-    setLinkState({
-      session_id: "browser-mock",
-      status: "connected",
-      detail: "mock stream"
-    });
-
-    let tick = 0;
-    browserMockTimer.current = window.setInterval(() => {
-      tick += 1;
-      setTelemetry({
-        session_id: "browser-mock",
-        ts: Math.floor(Date.now() / 1000),
-        altitude_m: 1200 + Math.sin(tick / 4) * 25,
-        speed_mps: 55 + Math.cos(tick / 7) * 2,
-        fuel_pct: Math.max(10, 90 - tick * 0.15),
-        heading_deg: (tick * 4) % 360,
-        fix_type: 3,
-        latitude_deg: 47.397742 + 0.002 * Math.sin(tick * 4 * Math.PI / 180),
-        longitude_deg: 8.545594 + 0.002 * Math.cos(tick * 4 * Math.PI / 180)
-      });
-      setVehicleState({
-        session_id: "browser-mock",
-        armed: tick > 5,
-        flight_mode: 4,
-        flight_mode_name: "GUIDED",
-        system_status: "active",
-        vehicle_type: "quadrotor",
-        autopilot: "ardupilotmega",
-      });
-    }, 1000);
-  }
-
-  function stopBrowserMock() {
-    if (browserMockTimer.current !== null) {
-      window.clearInterval(browserMockTimer.current);
-      browserMockTimer.current = null;
-      setLinkState({
-        session_id: "browser-mock",
-        status: "disconnected",
-        detail: "mock stopped"
-      });
-    }
-  }
-
   return (
     <div className="layout">
       <header className="topbar">
@@ -668,7 +557,6 @@ export default function App() {
       <main className="main-grid">
         <aside className="left-panel">
           <h2>Flight Data</h2>
-          <p className="source">Source: {source}</p>
 
           <div className="connect-box">
             <div className="row">
@@ -721,7 +609,7 @@ export default function App() {
 
           <div className="stat-card">
             <span>Status</span>
-            <strong>{linkState?.status ?? "idle"}</strong>
+            <strong>{formatLinkState(linkState)}</strong>
           </div>
 
           <div className="stat-card">
@@ -733,7 +621,7 @@ export default function App() {
 
           <div className="stat-card">
             <span>Mode</span>
-            <strong>{vehicleState?.flight_mode_name ?? "--"}</strong>
+            <strong>{vehicleState?.mode_name ?? "--"}</strong>
           </div>
 
           <div className="stat-card">
@@ -746,19 +634,19 @@ export default function App() {
           </div>
           <div className="stat-card">
             <span>Battery</span>
-            <strong>{formatMaybe(telemetry.fuel_pct)} %</strong>
+            <strong>{formatMaybe(telemetry.battery_pct)} %</strong>
           </div>
 
           <div className="command-row">
-            <button onClick={handleArm} disabled={!sessionId}>Arm</button>
-            <button className="secondary" onClick={handleDisarm} disabled={!sessionId}>Disarm</button>
+            <button onClick={handleArm} disabled={!connected}>Arm</button>
+            <button className="secondary" onClick={handleDisarm} disabled={!connected}>Disarm</button>
           </div>
 
           <div className="command-row">
             <select
-              value={vehicleState?.flight_mode ?? ""}
+              value={vehicleState?.custom_mode ?? ""}
               onChange={(e) => handleSetMode(Number(e.target.value))}
-              disabled={!sessionId || availableModes.length === 0}
+              disabled={!connected || availableModes.length === 0}
             >
               {availableModes.map((m) => (
                 <option key={m.custom_mode} value={m.custom_mode}>{m.name}</option>
@@ -769,26 +657,24 @@ export default function App() {
           <div className="command-row">
             <input type="number" value={takeoffAlt} onChange={(e) => setTakeoffAlt(e.target.value)} style={{width: 60}} />
             <span>m</span>
-            <button onClick={handleTakeoff} disabled={!sessionId}>Takeoff</button>
+            <button onClick={handleTakeoff} disabled={!connected}>Takeoff</button>
           </div>
 
           <div className="command-row">
             {findModeNumber("RTL") !== null && (
-              <button className="secondary" onClick={() => handleSetMode(findModeNumber("RTL")!)} disabled={!sessionId}>RTL</button>
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("RTL")!)} disabled={!connected}>RTL</button>
             )}
             {findModeNumber("LAND") !== null && (
-              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LAND")!)} disabled={!sessionId}>Land</button>
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LAND")!)} disabled={!connected}>Land</button>
             )}
             {findModeNumber("LOITER") !== null && (
-              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LOITER")!)} disabled={!sessionId}>Loiter</button>
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LOITER")!)} disabled={!connected}>Loiter</button>
             )}
           </div>
 
           <div className="meta-list">
-            <p>Session: {sessionId ?? "none"}</p>
             <p>Heading: {formatMaybe(telemetry.heading_deg)} deg</p>
-            <p>GPS Fix: {telemetry.fix_type ?? 0}</p>
-            {linkState?.detail ? <p>Link: {linkState.detail}</p> : null}
+            <p>GPS Fix: {telemetry.gps_fix_type ?? "--"}</p>
           </div>
 
           {error ? <p className="error">{error}</p> : null}
@@ -815,7 +701,7 @@ export default function App() {
               <div className="flight-status-bar">
                 <div className="flight-status-item">
                   <span className="flight-status-label">Mode</span>
-                  <span className="flight-status-value">{vehicleState?.flight_mode_name ?? "--"}</span>
+                  <span className="flight-status-value">{vehicleState?.mode_name ?? "--"}</span>
                 </div>
                 <div className="flight-status-item">
                   <span className="flight-status-label">Waypoint</span>
@@ -905,7 +791,7 @@ export default function App() {
                 </button>
                 <button
                   className="secondary"
-                  disabled={transferActive || sessionId === null || selectedMissionSeq === null}
+                  disabled={transferActive || !connected || selectedMissionSeq === null}
                   onClick={handleSetCurrentMissionItem}
                 >
                   Set Current
@@ -1069,14 +955,9 @@ export default function App() {
                 ) : (
                   <p>No transfer yet.</p>
                 )}
-                {missionTransferError ? (
-                  <p className="error-inline">
-                    {missionTransferError.code}: {missionTransferError.message}
-                  </p>
-                ) : null}
                 {missionState ? (
                   <p>
-                    Current seq: {missionState.current_seq} / total: {missionState.total_items} (state: {missionState.mission_state})
+                    Current seq: {missionState.current_seq} / total: {missionState.total_items}
                   </p>
                 ) : null}
               </div>
@@ -1114,6 +995,12 @@ function formatMaybe(value?: number) {
     return "--";
   }
   return value.toFixed(1);
+}
+
+function formatLinkState(state: LinkState | null): string {
+  if (state === null) return "idle";
+  if (typeof state === "string") return state;
+  return `error: ${state.error}`;
 }
 
 function asErrorMessage(error: unknown) {

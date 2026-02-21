@@ -92,7 +92,7 @@ dev-sitl: bridge-up
 	npm run tauri:dev
 
 test-sitl:
-	MP_SITL_UDP_BIND="$(MP_SITL_UDP_BIND)" cargo test -p mp-telemetry-core --test sitl_roundtrip -- --ignored --nocapture --test-threads=1
+	MP_SITL_UDP_BIND="$(MP_SITL_UDP_BIND)" cargo test -p mavkit --test sitl_roundtrip -- --ignored --nocapture --test-threads=1
 
 test-sitl-strict:
-	MP_SITL_UDP_BIND="$(MP_SITL_UDP_BIND)" MP_SITL_STRICT=1 cargo test -p mp-telemetry-core --test sitl_roundtrip -- --ignored --nocapture --test-threads=1
+	MP_SITL_UDP_BIND="$(MP_SITL_UDP_BIND)" MP_SITL_STRICT=1 cargo test -p mavkit --test sitl_roundtrip -- --ignored --nocapture --test-threads=1

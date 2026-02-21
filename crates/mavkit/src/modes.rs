@@ -1,23 +1,23 @@
-use mavlink::common::{MavAutopilot, MavType};
+use crate::state::{AutopilotType, FlightMode, VehicleType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VehicleClass {
+enum VehicleClass {
     Copter,
     Plane,
     Rover,
     Unknown,
 }
 
-pub fn vehicle_class(vehicle_type: MavType) -> VehicleClass {
+fn vehicle_class(vehicle_type: VehicleType) -> VehicleClass {
     match vehicle_type {
-        MavType::MAV_TYPE_QUADROTOR
-        | MavType::MAV_TYPE_HEXAROTOR
-        | MavType::MAV_TYPE_OCTOROTOR
-        | MavType::MAV_TYPE_TRICOPTER
-        | MavType::MAV_TYPE_COAXIAL
-        | MavType::MAV_TYPE_HELICOPTER => VehicleClass::Copter,
-        MavType::MAV_TYPE_FIXED_WING => VehicleClass::Plane,
-        MavType::MAV_TYPE_GROUND_ROVER => VehicleClass::Rover,
+        VehicleType::Quadrotor
+        | VehicleType::Hexarotor
+        | VehicleType::Octorotor
+        | VehicleType::Tricopter
+        | VehicleType::Coaxial
+        | VehicleType::Helicopter => VehicleClass::Copter,
+        VehicleType::FixedWing => VehicleClass::Plane,
+        VehicleType::GroundRover => VehicleClass::Rover,
         _ => VehicleClass::Unknown,
     }
 }
@@ -76,8 +76,8 @@ const ROVER_MODES: &[(u32, &str)] = &[
     (15, "GUIDED"),
 ];
 
-fn mode_table(autopilot: MavAutopilot, vehicle_type: MavType) -> &'static [(u32, &'static str)] {
-    if !matches!(autopilot, MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA) {
+fn mode_table(autopilot: AutopilotType, vehicle_type: VehicleType) -> &'static [(u32, &'static str)] {
+    if autopilot != AutopilotType::ArduPilotMega {
         return &[];
     }
     match vehicle_class(vehicle_type) {
@@ -87,8 +87,8 @@ fn mode_table(autopilot: MavAutopilot, vehicle_type: MavType) -> &'static [(u32,
     }
 }
 
-pub fn mode_name(autopilot: MavAutopilot, vehicle_type: MavType, custom_mode: u32) -> String {
-    if !matches!(autopilot, MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA) {
+pub(crate) fn mode_name(autopilot: AutopilotType, vehicle_type: VehicleType, custom_mode: u32) -> String {
+    if autopilot != AutopilotType::ArduPilotMega {
         return format!("MODE({custom_mode})");
     }
     let table = mode_table(autopilot, vehicle_type);
@@ -100,7 +100,7 @@ pub fn mode_name(autopilot: MavAutopilot, vehicle_type: MavType, custom_mode: u3
     format!("UNKNOWN({custom_mode})")
 }
 
-pub fn mode_number(autopilot: MavAutopilot, vehicle_type: MavType, name: &str) -> Option<u32> {
+pub(crate) fn mode_number(autopilot: AutopilotType, vehicle_type: VehicleType, name: &str) -> Option<u32> {
     let table = mode_table(autopilot, vehicle_type);
     let upper = name.to_uppercase();
     for &(num, mode_name) in table {
@@ -111,10 +111,13 @@ pub fn mode_number(autopilot: MavAutopilot, vehicle_type: MavType, name: &str) -
     None
 }
 
-pub fn available_modes(autopilot: MavAutopilot, vehicle_type: MavType) -> Vec<(u32, String)> {
+pub(crate) fn available_modes(autopilot: AutopilotType, vehicle_type: VehicleType) -> Vec<FlightMode> {
     mode_table(autopilot, vehicle_type)
         .iter()
-        .map(|&(num, name)| (num, name.to_string()))
+        .map(|&(num, name)| FlightMode {
+            custom_mode: num,
+            name: name.to_string(),
+        })
         .collect()
 }
 
@@ -125,7 +128,7 @@ mod tests {
     #[test]
     fn copter_guided_name() {
         assert_eq!(
-            mode_name(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_QUADROTOR, 4),
+            mode_name(AutopilotType::ArduPilotMega, VehicleType::Quadrotor, 4),
             "GUIDED"
         );
     }
@@ -133,7 +136,7 @@ mod tests {
     #[test]
     fn copter_guided_number_case_insensitive() {
         assert_eq!(
-            mode_number(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_QUADROTOR, "guided"),
+            mode_number(AutopilotType::ArduPilotMega, VehicleType::Quadrotor, "guided"),
             Some(4)
         );
     }
@@ -141,7 +144,7 @@ mod tests {
     #[test]
     fn plane_rtl_name() {
         assert_eq!(
-            mode_name(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_FIXED_WING, 11),
+            mode_name(AutopilotType::ArduPilotMega, VehicleType::FixedWing, 11),
             "RTL"
         );
     }
@@ -149,35 +152,35 @@ mod tests {
     #[test]
     fn unknown_mode_number() {
         assert_eq!(
-            mode_name(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_QUADROTOR, 999),
+            mode_name(AutopilotType::ArduPilotMega, VehicleType::Quadrotor, 999),
             "UNKNOWN(999)"
         );
     }
 
     #[test]
     fn available_modes_copter_length() {
-        let modes = available_modes(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_QUADROTOR);
+        let modes = available_modes(AutopilotType::ArduPilotMega, VehicleType::Quadrotor);
         assert_eq!(modes.len(), COPTER_MODES.len());
     }
 
     #[test]
     fn non_ardupilot_returns_mode_n() {
         assert_eq!(
-            mode_name(MavAutopilot::MAV_AUTOPILOT_GENERIC, MavType::MAV_TYPE_QUADROTOR, 4),
+            mode_name(AutopilotType::Generic, VehicleType::Quadrotor, 4),
             "MODE(4)"
         );
     }
 
     #[test]
     fn non_ardupilot_available_modes_empty() {
-        let modes = available_modes(MavAutopilot::MAV_AUTOPILOT_GENERIC, MavType::MAV_TYPE_QUADROTOR);
+        let modes = available_modes(AutopilotType::Generic, VehicleType::Quadrotor);
         assert!(modes.is_empty());
     }
 
     #[test]
     fn rover_guided_number() {
         assert_eq!(
-            mode_number(MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA, MavType::MAV_TYPE_GROUND_ROVER, "GUIDED"),
+            mode_number(AutopilotType::ArduPilotMega, VehicleType::GroundRover, "GUIDED"),
             Some(15)
         );
     }

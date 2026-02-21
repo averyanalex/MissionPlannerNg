@@ -64,56 +64,41 @@ export type TransferProgress = {
   retries_used: number;
 };
 
-export type TransferError = {
-  code: string;
-  message: string;
-};
-
 export type MissionState = {
-  session_id: string;
   current_seq: number;
   total_items: number;
-  mission_state: string;
-  mission_mode: number;
-  mission_id: number;
-  fence_id: number;
-  rally_points_id: number;
 };
 
 export async function validateMissionPlan(plan: MissionPlan): Promise<MissionIssue[]> {
   return invoke<MissionIssue[]>("mission_validate_plan", { plan });
 }
 
-export async function uploadMissionPlan(sessionId: string, plan: MissionPlan): Promise<void> {
-  await invoke("mission_upload_plan", { sessionId, plan });
+export async function uploadMissionPlan(plan: MissionPlan): Promise<void> {
+  await invoke("mission_upload_plan", { plan });
 }
 
-export async function downloadMissionPlan(sessionId: string, missionType: MissionType): Promise<MissionPlan> {
-  return invoke<MissionPlan>("mission_download_plan", { sessionId, missionType });
+export async function downloadMissionPlan(missionType: MissionType): Promise<MissionPlan> {
+  return invoke<MissionPlan>("mission_download_plan", { missionType });
 }
 
-export async function clearMissionPlan(sessionId: string, missionType: MissionType): Promise<void> {
-  await invoke("mission_clear_plan", { sessionId, missionType });
+export async function clearMissionPlan(missionType: MissionType): Promise<void> {
+  await invoke("mission_clear_plan", { missionType });
 }
 
-export async function verifyMissionRoundtrip(sessionId: string, plan: MissionPlan): Promise<boolean> {
-  return invoke<boolean>("mission_verify_roundtrip", { sessionId, plan });
+export async function verifyMissionRoundtrip(plan: MissionPlan): Promise<boolean> {
+  return invoke<boolean>("mission_verify_roundtrip", { plan });
 }
 
-export async function setCurrentMissionItem(sessionId: string, seq: number): Promise<void> {
-  await invoke("mission_set_current", { sessionId, seq });
+export async function setCurrentMissionItem(seq: number): Promise<void> {
+  await invoke("mission_set_current", { seq });
 }
 
-export async function cancelMissionTransfer(sessionId: string): Promise<void> {
-  await invoke("mission_cancel", { sessionId });
+export async function cancelMissionTransfer(): Promise<void> {
+  await invoke("mission_cancel");
 }
 
 export async function subscribeMissionProgress(cb: (event: TransferProgress) => void): Promise<UnlistenFn> {
   return listen<TransferProgress>("mission.progress", (event) => cb(event.payload));
-}
-
-export async function subscribeMissionError(cb: (event: TransferError) => void): Promise<UnlistenFn> {
-  return listen<TransferError>("mission.error", (event) => cb(event.payload));
 }
 
 export async function subscribeMissionState(cb: (event: MissionState) => void): Promise<UnlistenFn> {

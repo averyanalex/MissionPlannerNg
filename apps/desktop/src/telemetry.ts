@@ -9,36 +9,44 @@ export type ConnectRequest = {
   endpoint: LinkEndpoint;
 };
 
-export type ConnectResponse = {
-  session_id: string;
-};
-
-export type LinkStatus = "connecting" | "connected" | "disconnected" | "error";
-
-export type LinkStateEvent = {
-  session_id: string;
-  status: LinkStatus;
-  detail?: string;
-};
+export type LinkState = "connecting" | "connected" | "disconnected" | { error: string };
 
 export type Telemetry = {
-  session_id: string;
-  ts: number;
   altitude_m?: number;
   speed_mps?: number;
-  fuel_pct?: number;
   heading_deg?: number;
-  fix_type?: number;
   latitude_deg?: number;
   longitude_deg?: number;
+  battery_pct?: number;
+  gps_fix_type?: string;
 };
 
-export async function connectLink(request: ConnectRequest): Promise<ConnectResponse> {
-  return invoke<ConnectResponse>("connect_link", { request });
+export type VehicleState = {
+  armed: boolean;
+  custom_mode: number;
+  mode_name: string;
+  system_status: string;
+  vehicle_type: string;
+  autopilot: string;
+};
+
+export type HomePosition = {
+  latitude_deg: number;
+  longitude_deg: number;
+  altitude_m: number;
+};
+
+export type FlightModeEntry = {
+  custom_mode: number;
+  name: string;
+};
+
+export async function connectLink(request: ConnectRequest): Promise<void> {
+  await invoke("connect_link", { request });
 }
 
-export async function disconnectLink(sessionId: string): Promise<void> {
-  await invoke("disconnect_link", { sessionId });
+export async function disconnectLink(): Promise<void> {
+  await invoke("disconnect_link");
 }
 
 export async function listSerialPorts(): Promise<string[]> {
@@ -49,60 +57,38 @@ export async function subscribeTelemetry(cb: (telemetry: Telemetry) => void): Pr
   return listen<Telemetry>("telemetry://tick", (event) => cb(event.payload));
 }
 
-export async function subscribeLinkState(cb: (event: LinkStateEvent) => void): Promise<UnlistenFn> {
-  return listen<LinkStateEvent>("link://state", (event) => cb(event.payload));
+export async function subscribeLinkState(cb: (state: LinkState) => void): Promise<UnlistenFn> {
+  return listen<LinkState>("link://state", (event) => cb(event.payload));
 }
 
-export type HomePositionEvent = {
-  session_id: string;
-  latitude_deg: number;
-  longitude_deg: number;
-  altitude_m: number;
-};
-
-export async function subscribeHomePosition(cb: (event: HomePositionEvent) => void): Promise<UnlistenFn> {
-  return listen<HomePositionEvent>("home://position", (event) => cb(event.payload));
+export async function subscribeHomePosition(cb: (hp: HomePosition) => void): Promise<UnlistenFn> {
+  return listen<HomePosition>("home://position", (event) => cb(event.payload));
 }
 
-export type VehicleStateEvent = {
-  session_id: string;
-  armed: boolean;
-  flight_mode: number;
-  flight_mode_name: string;
-  system_status: string;
-  vehicle_type: string;
-  autopilot: string;
-};
-
-export type FlightModeEntry = {
-  custom_mode: number;
-  name: string;
-};
-
-export async function subscribeVehicleState(cb: (event: VehicleStateEvent) => void): Promise<UnlistenFn> {
-  return listen<VehicleStateEvent>("vehicle://state", (event) => cb(event.payload));
+export async function subscribeVehicleState(cb: (state: VehicleState) => void): Promise<UnlistenFn> {
+  return listen<VehicleState>("vehicle://state", (event) => cb(event.payload));
 }
 
-export async function armVehicle(sessionId: string, force: boolean): Promise<void> {
-  await invoke("arm_vehicle", { sessionId, force });
+export async function armVehicle(force: boolean): Promise<void> {
+  await invoke("arm_vehicle", { force });
 }
 
-export async function disarmVehicle(sessionId: string, force: boolean): Promise<void> {
-  await invoke("disarm_vehicle", { sessionId, force });
+export async function disarmVehicle(force: boolean): Promise<void> {
+  await invoke("disarm_vehicle", { force });
 }
 
-export async function setFlightMode(sessionId: string, customMode: number): Promise<void> {
-  await invoke("set_flight_mode", { sessionId, customMode });
+export async function setFlightMode(customMode: number): Promise<void> {
+  await invoke("set_flight_mode", { customMode });
 }
 
-export async function vehicleTakeoff(sessionId: string, altitudeM: number): Promise<void> {
-  await invoke("vehicle_takeoff", { sessionId, altitudeM });
+export async function vehicleTakeoff(altitudeM: number): Promise<void> {
+  await invoke("vehicle_takeoff", { altitudeM });
 }
 
-export async function vehicleGuidedGoto(sessionId: string, latDeg: number, lonDeg: number, altM: number): Promise<void> {
-  await invoke("vehicle_guided_goto", { sessionId, latDeg, lonDeg, altM });
+export async function vehicleGuidedGoto(latDeg: number, lonDeg: number, altM: number): Promise<void> {
+  await invoke("vehicle_guided_goto", { latDeg, lonDeg, altM });
 }
 
-export async function getAvailableModes(sessionId: string): Promise<FlightModeEntry[]> {
-  return invoke<FlightModeEntry[]>("get_available_modes", { sessionId });
+export async function getAvailableModes(): Promise<FlightModeEntry[]> {
+  return invoke<FlightModeEntry[]>("get_available_modes");
 }

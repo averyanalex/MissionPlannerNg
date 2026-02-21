@@ -50,6 +50,7 @@
           libsoup_3
           openssl
           pango
+          udev
           webkitgtk_4_1
         ];
 

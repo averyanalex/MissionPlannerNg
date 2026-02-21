@@ -1,4 +1,4 @@
-use crate::MissionType;
+use super::types::MissionType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,7 +191,7 @@ impl MissionTransferMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MissionFrame, MissionItem, MissionPlan, MissionType};
+    use crate::mission::{MissionFrame, MissionItem, MissionPlan, MissionType};
 
     fn sample_plan(count: usize) -> MissionPlan {
         let mut items = Vec::with_capacity(count);
@@ -305,7 +305,10 @@ mod tests {
         let mut failed = MissionTransferMachine::new_upload(
             MissionType::Mission,
             1,
-            RetryPolicy { max_retries: 0, ..RetryPolicy::default() },
+            RetryPolicy {
+                max_retries: 0,
+                ..RetryPolicy::default()
+            },
         );
         let _ = failed.on_timeout();
         assert!(failed.is_terminal());

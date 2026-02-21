@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "apps/desktop/src-tauri",
-    "crates/mp-telemetry-core",
-    "crates/mp-mission-core",
+    "crates/mavkit",
 ]
 resolver = "2"

@@ -1,62 +1,70 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use mp_mission_core::{
-    validate_plan, MissionIssue, MissionPlan, MissionType, TransferError, TransferProgress,
+use mavkit::{
+    validate_plan, FlightMode, HomePosition, LinkState, MissionIssue, MissionPlan, MissionType,
+    Telemetry, TransferProgress, Vehicle, VehicleState,
 };
-use mp_telemetry_core::{
-    list_serial_ports, ConnectRequest, ConnectResponse, CoreEvent, HomePositionEvent, LinkManager,
-    LinkStateEvent, MissionStateEvent, TelemetryEvent, VehicleStateEvent,
-};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use serde::Deserialize;
 use tauri::Emitter;
 
 struct AppState {
-    manager: Mutex<LinkManager>,
-    event_tx: mpsc::Sender<CoreEvent>,
-    cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    vehicle: tokio::sync::Mutex<Option<Vehicle>>,
 }
 
+#[derive(Deserialize)]
+struct ConnectRequest {
+    endpoint: LinkEndpoint,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum LinkEndpoint {
+    Udp { bind_addr: String },
+    Serial { port: String, baud: u32 },
+}
+
+// ---------------------------------------------------------------------------
+// Connection commands
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
-fn connect_link(
+async fn connect_link(
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
     request: ConnectRequest,
-) -> Result<ConnectResponse, String> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    let (response, cancel_flag) = manager.connect(request, state.event_tx.clone());
-    state
-        .cancel_flags
-        .lock()
-        .map_err(|_| String::from("failed to lock cancel flags"))?
-        .insert(response.session_id.clone(), cancel_flag);
-    Ok(response)
+) -> Result<(), String> {
+    let address = match &request.endpoint {
+        LinkEndpoint::Udp { bind_addr } => format!("udpin:{bind_addr}"),
+        LinkEndpoint::Serial { port, baud } => format!("serial:{port}:{baud}"),
+    };
+
+    let vehicle = Vehicle::connect(&address)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    spawn_event_bridges(&app, &vehicle);
+
+    *state.vehicle.lock().await = Some(vehicle);
+    Ok(())
 }
 
 #[tauri::command]
-fn disconnect_link(state: tauri::State<'_, AppState>, session_id: String) -> Result<(), String> {
-    let mut manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    if manager.disconnect(&session_id) {
-        let _ = state
-            .cancel_flags
-            .lock()
-            .map(|mut flags| flags.remove(&session_id));
-        Ok(())
-    } else {
-        Err(String::from("session not found"))
+async fn disconnect_link(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let vehicle = state.vehicle.lock().await.take();
+    if let Some(v) = vehicle {
+        v.disconnect().await.map_err(|e| e.to_string())?;
     }
+    Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Pure commands (no connection needed)
+// ---------------------------------------------------------------------------
 
 #[tauri::command]
 fn list_serial_ports_cmd() -> Result<Vec<String>, String> {
-    list_serial_ports()
+    let ports = serialport::available_ports().map_err(|e| e.to_string())?;
+    Ok(ports.into_iter().map(|p| p.port_name).collect())
 }
 
 #[tauri::command]
@@ -64,220 +72,236 @@ fn mission_validate_plan(plan: MissionPlan) -> Vec<MissionIssue> {
     validate_plan(&plan)
 }
 
+// ---------------------------------------------------------------------------
+// Vehicle commands
+// ---------------------------------------------------------------------------
+
 #[tauri::command]
-fn mission_upload_plan(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    plan: MissionPlan,
-) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.mission_upload(&session_id, plan)
+async fn arm_vehicle(state: tauri::State<'_, AppState>, force: bool) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.arm(force).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn mission_download_plan(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    mission_type: MissionType,
-) -> Result<MissionPlan, String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.mission_download(&session_id, mission_type)
+async fn disarm_vehicle(state: tauri::State<'_, AppState>, force: bool) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.disarm(force).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn mission_clear_plan(
+async fn set_flight_mode(
     state: tauri::State<'_, AppState>,
-    session_id: String,
-    mission_type: MissionType,
-) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.mission_clear(&session_id, mission_type)
-}
-
-#[tauri::command]
-fn mission_verify_roundtrip(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    plan: MissionPlan,
-) -> Result<bool, String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.mission_verify_roundtrip(&session_id, plan)
-}
-
-#[tauri::command]
-fn mission_set_current(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    seq: u16,
-) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.mission_set_current(&session_id, seq)
-}
-
-#[tauri::command]
-fn mission_cancel(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
-    let flags = state
-        .cancel_flags
-        .lock()
-        .map_err(|_| String::from("failed to lock cancel flags"))?;
-    let flag = flags
-        .get(&session_id)
-        .ok_or_else(|| String::from("session not found"))?;
-    flag.store(true, Ordering::Relaxed);
-    Ok(())
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct FlightModeEntry {
-    custom_mode: u32,
-    name: String,
-}
-
-#[tauri::command]
-fn arm_vehicle(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    force: bool,
-) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.arm_vehicle(&session_id, force)
-}
-
-#[tauri::command]
-fn disarm_vehicle(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
-    force: bool,
-) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.disarm_vehicle(&session_id, force)
-}
-
-#[tauri::command]
-fn set_flight_mode(
-    state: tauri::State<'_, AppState>,
-    session_id: String,
     custom_mode: u32,
 ) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.set_flight_mode(&session_id, custom_mode)
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.set_mode(custom_mode).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn vehicle_takeoff(
+async fn vehicle_takeoff(
     state: tauri::State<'_, AppState>,
-    session_id: String,
     altitude_m: f32,
 ) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    manager.takeoff(&session_id, altitude_m)
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.takeoff(altitude_m).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn vehicle_guided_goto(
+async fn vehicle_guided_goto(
     state: tauri::State<'_, AppState>,
-    session_id: String,
     lat_deg: f64,
     lon_deg: f64,
     alt_m: f32,
 ) -> Result<(), String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    let lat_e7 = (lat_deg * 1e7) as i32;
-    let lon_e7 = (lon_deg * 1e7) as i32;
-    manager.guided_goto(&session_id, lat_e7, lon_e7, alt_m)
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.goto(lat_deg, lon_deg, alt_m).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_available_modes(
+async fn get_available_modes(
     state: tauri::State<'_, AppState>,
-    session_id: String,
-) -> Result<Vec<FlightModeEntry>, String> {
-    let manager = state
-        .manager
-        .lock()
-        .map_err(|_| String::from("failed to lock link manager"))?;
-    let modes = manager.get_available_modes(&session_id)?;
-    Ok(modes
-        .into_iter()
-        .map(|(custom_mode, name)| FlightModeEntry { custom_mode, name })
-        .collect())
+) -> Result<Vec<FlightMode>, String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    Ok(vehicle.available_modes())
 }
 
+// ---------------------------------------------------------------------------
+// Mission commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn mission_upload_plan(
+    state: tauri::State<'_, AppState>,
+    plan: MissionPlan,
+) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.mission().upload(plan).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mission_download_plan(
+    state: tauri::State<'_, AppState>,
+    mission_type: MissionType,
+) -> Result<MissionPlan, String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle
+        .mission()
+        .download(mission_type)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mission_clear_plan(
+    state: tauri::State<'_, AppState>,
+    mission_type: MissionType,
+) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle
+        .mission()
+        .clear(mission_type)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mission_verify_roundtrip(
+    state: tauri::State<'_, AppState>,
+    plan: MissionPlan,
+) -> Result<bool, String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle
+        .mission()
+        .verify_roundtrip(plan)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mission_set_current(
+    state: tauri::State<'_, AppState>,
+    seq: u16,
+) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle
+        .mission()
+        .set_current(seq)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn mission_cancel(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.mission().cancel_transfer();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Watch → Tauri event bridges
+// ---------------------------------------------------------------------------
+
+fn spawn_event_bridges(app: &tauri::AppHandle, vehicle: &Vehicle) {
+    // Telemetry
+    {
+        let mut rx = vehicle.telemetry();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let t: Telemetry = rx.borrow().clone();
+                let _ = handle.emit("telemetry://tick", &t);
+            }
+        });
+    }
+
+    // VehicleState
+    {
+        let mut rx = vehicle.state();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let s: VehicleState = rx.borrow().clone();
+                let _ = handle.emit("vehicle://state", &s);
+            }
+        });
+    }
+
+    // HomePosition
+    {
+        let mut rx = vehicle.home_position();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let hp: Option<HomePosition> = rx.borrow().clone();
+                if let Some(hp) = hp {
+                    let _ = handle.emit("home://position", &hp);
+                }
+            }
+        });
+    }
+
+    // MissionState
+    {
+        let mut rx = vehicle.mission_state();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let ms = rx.borrow().clone();
+                let _ = handle.emit("mission.state", &ms);
+            }
+        });
+    }
+
+    // LinkState
+    {
+        let mut rx = vehicle.link_state();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let ls: LinkState = rx.borrow().clone();
+                let _ = handle.emit("link://state", &ls);
+            }
+        });
+    }
+
+    // MissionProgress
+    {
+        let mut rx = vehicle.mission_progress();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let mp: Option<TransferProgress> = rx.borrow().clone();
+                if let Some(mp) = mp {
+                    let _ = handle.emit("mission.progress", &mp);
+                }
+            }
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
 fn main() {
-    let (event_tx, event_rx) = mpsc::channel::<CoreEvent>();
     let state = AppState {
-        manager: Mutex::new(LinkManager::new()),
-        event_tx,
-        cancel_flags: Mutex::new(HashMap::new()),
+        vehicle: tokio::sync::Mutex::new(None),
     };
 
     tauri::Builder::default()
         .manage(state)
-        .setup(move |app| {
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                while let Ok(event) = event_rx.recv() {
-                    match event {
-                        CoreEvent::Link(payload) => {
-                            let _ = emit_link_event(&app_handle, payload);
-                        }
-                        CoreEvent::Telemetry(payload) => {
-                            let _ = emit_telemetry_event(&app_handle, payload);
-                        }
-                        CoreEvent::MissionProgress(payload) => {
-                            let _ = emit_mission_progress_event(&app_handle, payload);
-                        }
-                        CoreEvent::MissionError(payload) => {
-                            let _ = emit_mission_error_event(&app_handle, payload);
-                        }
-                        CoreEvent::MissionState(payload) => {
-                            let _ = emit_mission_state_event(&app_handle, payload);
-                        }
-                        CoreEvent::HomePosition(payload) => {
-                            let _ = emit_home_position_event(&app_handle, payload);
-                        }
-                        CoreEvent::VehicleState(payload) => {
-                            let _ = emit_vehicle_state_event(&app_handle, payload);
-                        }
-                    }
-                }
-            });
-
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
             connect_link,
             disconnect_link,
@@ -298,53 +322,4 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");
-}
-
-fn emit_link_event(
-    app_handle: &tauri::AppHandle,
-    payload: LinkStateEvent,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("link://state", payload)
-}
-
-fn emit_telemetry_event(
-    app_handle: &tauri::AppHandle,
-    payload: TelemetryEvent,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("telemetry://tick", payload)
-}
-
-fn emit_mission_progress_event(
-    app_handle: &tauri::AppHandle,
-    payload: TransferProgress,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("mission.progress", payload)
-}
-
-fn emit_mission_error_event(
-    app_handle: &tauri::AppHandle,
-    payload: TransferError,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("mission.error", payload)
-}
-
-fn emit_mission_state_event(
-    app_handle: &tauri::AppHandle,
-    payload: MissionStateEvent,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("mission.state", payload)
-}
-
-fn emit_home_position_event(
-    app_handle: &tauri::AppHandle,
-    payload: HomePositionEvent,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("home://position", payload)
-}
-
-fn emit_vehicle_state_event(
-    app_handle: &tauri::AppHandle,
-    payload: VehicleStateEvent,
-) -> Result<(), tauri::Error> {
-    app_handle.emit("vehicle://state", payload)
 }
