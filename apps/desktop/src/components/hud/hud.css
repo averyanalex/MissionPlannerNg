@@ -1,0 +1,169 @@
+/* HUD Panel — military/game-style wireframe flight instruments */
+
+.hud-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #0a0f14;
+  overflow: hidden;
+  font-family: "JetBrains Mono", "Consolas", "Monaco", monospace;
+  font-variant-numeric: tabular-nums;
+  color: #12b9ff;
+}
+
+/* Faint cyan grid background */
+.hud-grid-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(18, 185, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(18, 185, 255, 0.04) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* CRT scanline overlay */
+.hud-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 3px,
+    rgba(0, 0, 0, 0.03) 3px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  z-index: 50;
+}
+
+/* Glow filters */
+.hud-glow {
+  filter: drop-shadow(0 0 4px rgba(18, 185, 255, 0.6));
+}
+
+.hud-glow-soft {
+  filter: drop-shadow(0 0 2px rgba(18, 185, 255, 0.4));
+}
+
+.hud-glow-green {
+  filter: drop-shadow(0 0 4px rgba(87, 227, 139, 0.6));
+}
+
+.hud-glow-danger {
+  filter: drop-shadow(0 0 4px rgba(255, 68, 68, 0.6));
+}
+
+.hud-glow-warning {
+  filter: drop-shadow(0 0 4px rgba(255, 176, 32, 0.6));
+}
+
+/* Font utility */
+.hud-font {
+  font-family: "JetBrains Mono", "Consolas", "Monaco", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Vertical tape fade-out mask (top and bottom edges) */
+.tape-mask-vertical {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 15%,
+    black 85%,
+    transparent 100%
+  );
+}
+
+/* Horizontal tape fade-out mask (left and right edges) */
+.tape-mask-horizontal {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 10%,
+    black 90%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    black 10%,
+    black 90%,
+    transparent 100%
+  );
+}
+
+/* HUD layout grid */
+.hud-grid {
+  display: grid;
+  grid-template-columns: 100px 1fr 100px;
+  grid-template-rows: 56px 1fr 48px;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+/* Readout box — filled center value display */
+.hud-readout {
+  font-size: 14px;
+  font-weight: 700;
+  fill: #12b9ff;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.hud-readout-bg {
+  fill: #0a0f14;
+  stroke: #12b9ff;
+  stroke-width: 2;
+}
+
+/* SVG text defaults */
+.hud-svg-text {
+  fill: #12b9ff;
+  font-family: "JetBrains Mono", "Consolas", "Monaco", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-svg-line {
+  stroke: #12b9ff;
+  stroke-width: 1.5;
+}
+
+.hud-svg-line-dashed {
+  stroke: #12b9ff;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+/* Force geometric-precision anti-aliasing on all HUD SVGs */
+.hud-panel svg {
+  shape-rendering: geometricPrecision;
+}
+
+/* Mini-map container */
+.hud-minimap {
+  position: absolute;
+  bottom: 52px;
+  left: 104px;
+  width: 192px;
+  height: 192px;
+  border: 1px solid rgba(18, 185, 255, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 10;
+  opacity: 0.85;
+}
+
+.hud-minimap .maplibregl-ctrl-group,
+.hud-minimap .maplibregl-ctrl {
+  display: none !important;
+}

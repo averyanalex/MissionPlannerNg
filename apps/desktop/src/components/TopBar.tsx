@@ -1,7 +1,7 @@
 import { cn } from "../lib/utils";
 import type { LinkState } from "../telemetry";
 
-type ActiveTab = "flight" | "planner";
+type ActiveTab = "flight" | "planner" | "hud";
 
 type TopBarProps = {
   activeTab: ActiveTab;
@@ -24,7 +24,7 @@ export function TopBar({ activeTab, onTabChange, linkState }: TopBarProps) {
         <div className={cn("h-2 w-2 rounded-full", linkDotColor(linkState))} />
       </div>
       <nav className="flex gap-1">
-        {(["flight", "planner"] as const).map((tab) => (
+        {(["flight", "planner", "hud"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => onTabChange(tab)}
@@ -35,7 +35,7 @@ export function TopBar({ activeTab, onTabChange, linkState }: TopBarProps) {
                 : "text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50"
             )}
           >
-            {tab === "flight" ? "Flight Data" : "Planner"}
+            {tab === "flight" ? "Flight Data" : tab === "planner" ? "Planner" : "HUD"}
           </button>
         ))}
       </nav>

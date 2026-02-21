@@ -5,11 +5,12 @@ import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { FlightPanel } from "./components/FlightPanel";
 import { PlannerPanel } from "./components/PlannerPanel";
+import { HudPanel } from "./components/hud/HudPanel";
 import { useVehicle } from "./hooks/use-vehicle";
 import { useMission } from "./hooks/use-mission";
 import "./app.css";
 
-type ActiveTab = "flight" | "planner";
+type ActiveTab = "flight" | "planner" | "hud";
 
 function checkGpuRenderer() {
   const canvas = document.createElement("canvas");
@@ -63,6 +64,8 @@ export default function App() {
           <main className="flex-1 overflow-hidden p-3">
             {activeTab === "flight" ? (
               <FlightPanel vehicle={vehicle} mission={mission} />
+            ) : activeTab === "hud" ? (
+              <HudPanel vehicle={vehicle} mission={mission} />
             ) : (
               <PlannerPanel vehicle={vehicle} mission={mission} />
             )}
