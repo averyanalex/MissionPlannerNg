@@ -5,8 +5,11 @@ use mavkit::{
     Telemetry, TransferProgress, Vehicle, VehicleState,
 };
 use serde::Deserialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
+
+static TELEMETRY_INTERVAL_MS: AtomicU64 = AtomicU64::new(200);
 
 struct AppState {
     vehicle: tokio::sync::Mutex<Option<Vehicle>>,
@@ -133,6 +136,19 @@ async fn get_available_modes(
 }
 
 // ---------------------------------------------------------------------------
+// Settings commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn set_telemetry_rate(rate_hz: u32) -> Result<(), String> {
+    if rate_hz == 0 || rate_hz > 20 {
+        return Err("rate_hz must be between 1 and 20".into());
+    }
+    TELEMETRY_INTERVAL_MS.store(1000 / rate_hz as u64, Ordering::Relaxed);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Mission commands
 // ---------------------------------------------------------------------------
 
@@ -215,15 +231,14 @@ async fn mission_cancel(state: tauri::State<'_, AppState>) -> Result<(), String>
 // ---------------------------------------------------------------------------
 
 fn spawn_event_bridges(app: &tauri::AppHandle, vehicle: &Vehicle) {
-    // Telemetry — throttled to 5 Hz to avoid flooding the IPC bridge
+    // Telemetry — throttled by TELEMETRY_INTERVAL_MS (re-read each loop for live rate changes)
     {
         let mut rx = vehicle.telemetry();
         let handle = app.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(200));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                interval.tick().await;
+                let ms = TELEMETRY_INTERVAL_MS.load(Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_millis(ms)).await;
                 match rx.has_changed() {
                     Ok(true) => {
                         let t: Telemetry = rx.borrow_and_update().clone();
@@ -328,7 +343,8 @@ fn main() {
             set_flight_mode,
             vehicle_takeoff,
             vehicle_guided_goto,
-            get_available_modes
+            get_available_modes,
+            set_telemetry_rate
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");

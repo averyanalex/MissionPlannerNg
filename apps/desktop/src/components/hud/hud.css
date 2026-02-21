@@ -108,7 +108,7 @@
   width: 100%;
   height: 100%;
   position: relative;
-  z-index: 1;
+  z-index: 5;
 }
 
 /* Readout box — filled center value display */
@@ -165,5 +165,34 @@
 
 .hud-minimap .maplibregl-ctrl-group,
 .hud-minimap .maplibregl-ctrl {
+  display: none !important;
+}
+
+/* Synthetic Vision System (SVS) background */
+.hud-svs-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.hud-svs-active {
+  background: transparent;
+}
+
+.hud-svs-info-bg {
+  background: rgba(10, 15, 20, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.hud-svs-status-bg {
+  background: rgba(10, 15, 20, 0.50);
+  backdrop-filter: blur(4px);
+}
+
+.hud-svs-bg .maplibregl-ctrl-group,
+.hud-svs-bg .maplibregl-ctrl,
+.hud-svs-bg .maplibregl-ctrl-attrib {
   display: none !important;
 }

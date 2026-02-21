@@ -3,14 +3,18 @@ import { toast, Toaster } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
-import { FlightPanel } from "./components/FlightPanel";
-import { PlannerPanel } from "./components/PlannerPanel";
+import { MapPanel } from "./components/MapPanel";
+import { TelemetryPanel } from "./components/TelemetryPanel";
 import { HudPanel } from "./components/hud/HudPanel";
+import { MissionPanel } from "./components/MissionPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { useVehicle } from "./hooks/use-vehicle";
 import { useMission } from "./hooks/use-mission";
+import { useSettings } from "./hooks/use-settings";
+import { setTelemetryRate } from "./telemetry";
 import "./app.css";
 
-type ActiveTab = "flight" | "planner" | "hud";
+type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "settings";
 
 function checkGpuRenderer() {
   const canvas = document.createElement("canvas");
@@ -51,9 +55,15 @@ function checkGpuRenderer() {
 export default function App() {
   const vehicle = useVehicle();
   const mission = useMission(vehicle.connected, vehicle.telemetry, vehicle.homePosition);
-  const [activeTab, setActiveTab] = useState<ActiveTab>("flight");
+  const { settings, updateSettings } = useSettings();
+  const [activeTab, setActiveTab] = useState<ActiveTab>("map");
 
   useEffect(() => { checkGpuRenderer() }, []);
+
+  // Apply saved telemetry rate on mount
+  useEffect(() => {
+    setTelemetryRate(settings.telemetryRateHz).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -62,12 +72,16 @@ export default function App() {
         <div className="flex flex-1 overflow-hidden">
           <Sidebar vehicle={vehicle} />
           <main className="flex-1 overflow-hidden p-3">
-            {activeTab === "flight" ? (
-              <FlightPanel vehicle={vehicle} mission={mission} />
+            {activeTab === "map" ? (
+              <MapPanel vehicle={vehicle} mission={mission} />
+            ) : activeTab === "telemetry" ? (
+              <TelemetryPanel vehicle={vehicle} mission={mission} />
             ) : activeTab === "hud" ? (
-              <HudPanel vehicle={vehicle} mission={mission} />
+              <HudPanel vehicle={vehicle} mission={mission} svsEnabled={settings.svsEnabled} />
+            ) : activeTab === "mission" ? (
+              <MissionPanel vehicle={vehicle} mission={mission} />
             ) : (
-              <PlannerPanel vehicle={vehicle} mission={mission} />
+              <SettingsPanel settings={settings} updateSettings={updateSettings} />
             )}
           </main>
         </div>

@@ -132,3 +132,7 @@ export async function vehicleGuidedGoto(latDeg: number, lonDeg: number, altM: nu
 export async function getAvailableModes(): Promise<FlightModeEntry[]> {
   return invoke<FlightModeEntry[]>("get_available_modes");
 }
+
+export async function setTelemetryRate(rateHz: number): Promise<void> {
+  await invoke("set_telemetry_rate", { rateHz });
+}

@@ -1,13 +1,22 @@
+import { Map, Activity, Crosshair, Route, Settings } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { LinkState } from "../telemetry";
 
-type ActiveTab = "flight" | "planner" | "hud";
+type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "settings";
 
 type TopBarProps = {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   linkState: LinkState | null;
 };
+
+const TABS: { id: ActiveTab; label: string; Icon: typeof Map }[] = [
+  { id: "map", label: "Map", Icon: Map },
+  { id: "telemetry", label: "Telemetry", Icon: Activity },
+  { id: "hud", label: "HUD", Icon: Crosshair },
+  { id: "mission", label: "Mission", Icon: Route },
+  { id: "settings", label: "Settings", Icon: Settings },
+];
 
 function linkDotColor(state: LinkState | null): string {
   if (state === "connected") return "bg-success";
@@ -24,18 +33,19 @@ export function TopBar({ activeTab, onTabChange, linkState }: TopBarProps) {
         <div className={cn("h-2 w-2 rounded-full", linkDotColor(linkState))} />
       </div>
       <nav className="flex gap-1">
-        {(["flight", "planner", "hud"] as const).map((tab) => (
+        {TABS.map(({ id, label, Icon }) => (
           <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
+            key={id}
+            onClick={() => onTabChange(id)}
             className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              activeTab === tab
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+              activeTab === id
                 ? "bg-bg-tertiary text-text-primary"
                 : "text-text-secondary hover:text-text-primary hover:bg-bg-tertiary/50"
             )}
           >
-            {tab === "flight" ? "Flight Data" : tab === "planner" ? "Planner" : "HUD"}
+            <Icon size={14} />
+            {label}
           </button>
         ))}
       </nav>

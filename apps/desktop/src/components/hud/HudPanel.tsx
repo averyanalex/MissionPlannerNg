@@ -1,14 +1,15 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useMemo } from "react";
 import type { useVehicle } from "../../hooks/use-vehicle";
 import type { useMission } from "../../hooks/use-mission";
 import { TapeGauge } from "./TapeGauge";
 import { ArtificialHorizon } from "./ArtificialHorizon";
-import { MissionMap } from "../MissionMap";
+import { MissionMap, type SvsTelemetry } from "../MissionMap";
 import "./hud.css";
 
 type HudPanelProps = {
   vehicle: ReturnType<typeof useVehicle>;
   mission: ReturnType<typeof useMission>;
+  svsEnabled: boolean;
 };
 
 function fmt(value: number | undefined, decimals = 1): string {
@@ -37,7 +38,7 @@ function BatteryIcon({ pct }: { pct: number | undefined }) {
   );
 }
 
-export function HudPanel({ vehicle, mission }: HudPanelProps) {
+export function HudPanel({ vehicle, mission, svsEnabled }: HudPanelProps) {
   const { telemetry, vehicleState, vehiclePosition } = vehicle;
   const horizonRef = useRef<HTMLDivElement>(null);
   const [horizonSize, setHorizonSize] = useState({ width: 400, height: 300 });
@@ -59,21 +60,56 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
     return () => obs.disconnect();
   }, []);
 
+  // Compute SVS telemetry — requires position + attitude + altitude
+  const svsTelemetry = useMemo((): SvsTelemetry | null => {
+    if (
+      !vehiclePosition ||
+      telemetry.pitch_deg == null ||
+      telemetry.roll_deg == null ||
+      telemetry.altitude_m == null
+    ) {
+      return null;
+    }
+    return {
+      latitude_deg: vehiclePosition.latitude_deg,
+      longitude_deg: vehiclePosition.longitude_deg,
+      heading_deg: vehiclePosition.heading_deg,
+      pitch_deg: telemetry.pitch_deg,
+      roll_deg: telemetry.roll_deg,
+      altitude_m: telemetry.altitude_m,
+    };
+  }, [vehiclePosition, telemetry.pitch_deg, telemetry.roll_deg, telemetry.altitude_m]);
+
+  const hasSvs = svsEnabled && svsTelemetry !== null;
+
   const armed = vehicleState?.armed ?? false;
   const modeName = vehicleState?.mode_name ?? "--";
   const missionState = mission.missionState;
 
   return (
-    <div className="hud-panel h-full w-full rounded-lg">
+    <div className={`hud-panel h-full w-full rounded-lg ${hasSvs ? "hud-svs-active" : ""}`}>
       {/* Background layers */}
-      <div className="hud-grid-bg" />
+      {hasSvs ? (
+        <div className="hud-svs-bg">
+          <MissionMap
+            missionItems={mission.items}
+            homePosition={mission.missionType === "mission" ? mission.homePosition : null}
+            selectedSeq={null}
+            readOnly
+            syntheticVision
+            svsTelemetry={svsTelemetry}
+          />
+        </div>
+      ) : (
+        <div className="hud-grid-bg" />
+      )}
       <div className="hud-scanlines" />
 
       {/* Main grid */}
       <div className="hud-grid">
         {/* Row 1 — top bar */}
         {/* Top-left: waypoint info */}
-        <div className="flex items-center justify-center px-1">
+        <div className={`flex items-center justify-center px-1 ${hasSvs ? "hud-svs-info-bg" : ""}`}>
           <div className="hud-font text-center text-[10px] opacity-70">
             <div className="text-[9px] opacity-50">WPT</div>
             <div>
@@ -103,7 +139,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
         </div>
 
         {/* Top-right: GPS info */}
-        <div className="flex items-center justify-center px-1">
+        <div className={`flex items-center justify-center px-1 ${hasSvs ? "hud-svs-info-bg" : ""}`}>
           <div className="hud-font text-center text-[10px] opacity-70">
             <div className="text-[9px] opacity-50">GPS</div>
             <div>{telemetry.gps_fix_type ?? "--"}</div>
@@ -159,7 +195,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
 
         {/* Row 3 — bottom bar */}
         {/* Bottom-left: mode / armed */}
-        <div className="flex items-center justify-center px-1">
+        <div className={`flex items-center justify-center px-1 ${hasSvs ? "hud-svs-info-bg" : ""}`}>
           <div className="hud-font text-center">
             <div
               className={`text-xs font-bold ${armed ? "hud-glow-danger" : "hud-glow-green"}`}
@@ -171,7 +207,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
         </div>
 
         {/* Bottom-center: mode + throttle */}
-        <div className="flex items-center justify-between px-4">
+        <div className={`flex items-center justify-between px-4 ${hasSvs ? "hud-svs-status-bg" : ""}`}>
           <div className="hud-font flex items-center gap-3">
             <div>
               <span className="text-[9px] opacity-50">MODE </span>
@@ -203,7 +239,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
         </div>
 
         {/* Bottom-right: battery */}
-        <div className="flex items-center justify-center px-1">
+        <div className={`flex items-center justify-center px-1 ${hasSvs ? "hud-svs-info-bg" : ""}`}>
           <div className="hud-font flex flex-col items-center gap-0.5">
             <BatteryIcon pct={telemetry.battery_pct} />
             <span className="text-[10px]">{fmtInt(telemetry.battery_pct)}%</span>
@@ -212,18 +248,20 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
         </div>
       </div>
 
-      {/* Mini-map overlay */}
-      <div className="hud-minimap">
-        <MissionMap
-          missionItems={mission.items}
-          homePosition={mission.missionType === "mission" ? mission.homePosition : null}
-          selectedSeq={null}
-          readOnly
-          vehiclePosition={vehiclePosition}
-          currentMissionSeq={missionState?.current_seq ?? null}
-          followVehicle
-        />
-      </div>
+      {/* Mini-map overlay (hidden when SVS active — whole background is a map) */}
+      {!hasSvs && (
+        <div className="hud-minimap">
+          <MissionMap
+            missionItems={mission.items}
+            homePosition={mission.missionType === "mission" ? mission.homePosition : null}
+            selectedSeq={null}
+            readOnly
+            vehiclePosition={vehiclePosition}
+            currentMissionSeq={missionState?.current_seq ?? null}
+            followVehicle
+          />
+        </div>
+      )}
     </div>
   );
 }

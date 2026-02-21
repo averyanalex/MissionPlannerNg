@@ -18,6 +18,15 @@ const DEM_TILE_URL =
 const SOURCE_ID = "mission-items";
 const LINE_LAYER_ID = "mission-line";
 
+type SvsTelemetry = {
+  latitude_deg: number;
+  longitude_deg: number;
+  heading_deg: number;
+  pitch_deg: number;
+  roll_deg: number;
+  altitude_m: number;
+};
+
 type MissionMapProps = {
   missionItems: MissionItem[];
   homePosition: HomePosition | null;
@@ -31,12 +40,17 @@ type MissionMapProps = {
   vehiclePosition?: { latitude_deg: number; longitude_deg: number; heading_deg: number } | null;
   currentMissionSeq?: number | null;
   followVehicle?: boolean;
+  syntheticVision?: boolean;
+  svsTelemetry?: SvsTelemetry | null;
 };
+
+export type { SvsTelemetry };
 
 export function MissionMap({
   missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq,
   onRightClick, onMoveWaypoint, onContextMenu, readOnly,
   vehiclePosition, currentMissionSeq, followVehicle,
+  syntheticVision, svsTelemetry,
 }: MissionMapProps) {
   type MapLayer = "plan" | "hybrid" | "satellite";
   const [mapLayer, setMapLayer] = useState<MapLayer>("plan");
@@ -99,9 +113,10 @@ export function MissionMap({
     const map = new maplibregl.Map({
       container: containerRef.current,
       center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      pitch: 0,
+      zoom: syntheticVision ? 14 : DEFAULT_ZOOM,
+      pitch: syntheticVision ? 75 : 0,
       maxPitch: 85,
+      interactive: !syntheticVision,
     });
 
     map.setStyle(BASE_STYLE_URL, {
@@ -135,9 +150,11 @@ export function MissionMap({
       },
     });
 
-    map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "top-right");
-    map.addControl(new maplibregl.GlobeControl(), "top-right");
-    map.addControl(new maplibregl.TerrainControl({ source: "terrainSource", exaggeration: 1.5 }), "top-right");
+    if (!syntheticVision) {
+      map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "top-right");
+      map.addControl(new maplibregl.GlobeControl(), "top-right");
+      map.addControl(new maplibregl.TerrainControl({ source: "terrainSource", exaggeration: 1.5 }), "top-right");
+    }
 
     map.on("style.load", () => {
       if (!map.getSource(SOURCE_ID)) {
@@ -158,21 +175,41 @@ export function MissionMap({
       baseLayerIdsRef.current = map.getStyle().layers
         .filter((l: any) => !ownIds.has(l.id))
         .map((l: any) => l.id);
-    });
 
-    map.on("click", (event: MapMouseEvent) => {
-      if (readOnlyRef.current) return;
-      onAddWaypointRef.current?.(event.lngLat.lat, event.lngLat.lng);
-    });
-
-    map.on("contextmenu", (event: MapMouseEvent) => {
-      event.preventDefault();
-      if (onContextMenuRef.current) {
-        onContextMenuRef.current(event.lngLat.lat, event.lngLat.lng, event.point.x, event.point.y);
-      } else {
-        onRightClickRef.current?.(event.lngLat.lat, event.lngLat.lng);
+      if (syntheticVision) {
+        // Enable satellite + hillshade, hide vector labels
+        try { map.setLayoutProperty("satellite", "visibility", "visible"); } catch {}
+        try { map.setLayoutProperty("hills", "visibility", "visible"); } catch {}
+        for (const id of baseLayerIdsRef.current) {
+          try { map.setLayoutProperty(id, "visibility", "none"); } catch {}
+        }
+        map.setTerrain({ source: "terrainSource", exaggeration: 1.5 });
+        map.setSky({
+          "sky-color": "#199EF3",
+          "sky-horizon-blend": 0.7,
+          "horizon-color": "#f0f8ff",
+          "fog-color": "#9ec7e8",
+          "fog-ground-blend": 0.6,
+          "atmosphere-blend": 0.8,
+        });
       }
     });
+
+    if (!syntheticVision) {
+      map.on("click", (event: MapMouseEvent) => {
+        if (readOnlyRef.current) return;
+        onAddWaypointRef.current?.(event.lngLat.lat, event.lngLat.lng);
+      });
+
+      map.on("contextmenu", (event: MapMouseEvent) => {
+        event.preventDefault();
+        if (onContextMenuRef.current) {
+          onContextMenuRef.current(event.lngLat.lat, event.lngLat.lng, event.point.x, event.point.y);
+        } else {
+          onRightClickRef.current?.(event.lngLat.lat, event.lngLat.lng);
+        }
+      });
+    }
 
     mapRef.current = map;
 
@@ -300,8 +337,9 @@ export function MissionMap({
     }
   }, [missionItems, selectedSeq, readOnly, currentMissionSeq]);
 
-  // Vehicle marker
+  // Vehicle marker (skip in SVS mode — the pilot IS the vehicle)
   useEffect(() => {
+    if (syntheticVision) return;
     const map = mapRef.current;
     if (!map) return;
 
@@ -329,10 +367,29 @@ export function MissionMap({
       vehicleMarkerRef.current.remove();
       vehicleMarkerRef.current = null;
     }
-  }, [vehiclePosition, followVehicle]);
+  }, [vehiclePosition, followVehicle, syntheticVision]);
 
-  // Fit bounds on initial load
+  // SVS camera tracking
   useEffect(() => {
+    if (!syntheticVision || !svsTelemetry) return;
+    const map = mapRef.current;
+    if (!map) return;
+
+    const { latitude_deg, longitude_deg, heading_deg, pitch_deg, roll_deg, altitude_m } = svsTelemetry;
+    const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
+    map.jumpTo({
+      center: [longitude_deg, latitude_deg],
+      zoom: clamp(16.5 - Math.log2(Math.max(10, altitude_m) / 30), 11, 17),
+      bearing: heading_deg,
+      pitch: clamp(75 - pitch_deg, 20, 85),
+      roll: roll_deg,
+    });
+  }, [syntheticVision, svsTelemetry]);
+
+  // Fit bounds on initial load (skip in SVS mode)
+  useEffect(() => {
+    if (syntheticVision) return;
     const map = mapRef.current;
     if (!map || hasSetInitialViewport.current) return;
 
@@ -345,26 +402,28 @@ export function MissionMap({
 
     map.fitBounds(bounds, { padding: 48, maxZoom: 15, duration: 0 });
     hasSetInitialViewport.current = true;
-  }, [missionItems, homePosition]);
+  }, [missionItems, homePosition, syntheticVision]);
 
   return (
     <div className="relative h-full w-full">
       <div className="h-full w-full" ref={containerRef} />
-      <div className="absolute top-3 left-3 z-10 flex overflow-hidden rounded-md border border-border-light bg-bg-primary/85 text-xs backdrop-blur-sm">
-        {(["plan", "hybrid", "satellite"] as const).map((s) => (
-          <button
-            key={s}
-            onClick={() => setMapLayer(s)}
-            className={`px-3 py-1.5 font-medium capitalize ${
-              mapLayer === s
-                ? "bg-accent-blue text-white"
-                : "text-text-primary hover:bg-bg-tertiary"
-            }`}
-          >
-            {s === "plan" ? "Plan" : s === "hybrid" ? "Hybrid" : "Satellite"}
-          </button>
-        ))}
-      </div>
+      {!syntheticVision && (
+        <div className="absolute top-3 left-3 z-10 flex overflow-hidden rounded-md border border-border-light bg-bg-primary/85 text-xs backdrop-blur-sm">
+          {(["plan", "hybrid", "satellite"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setMapLayer(s)}
+              className={`px-3 py-1.5 font-medium capitalize ${
+                mapLayer === s
+                  ? "bg-accent-blue text-white"
+                  : "text-text-primary hover:bg-bg-tertiary"
+              }`}
+            >
+              {s === "plan" ? "Plan" : s === "hybrid" ? "Hybrid" : "Satellite"}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

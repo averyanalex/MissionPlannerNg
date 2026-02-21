@@ -7,7 +7,7 @@ import type { useMission } from "../hooks/use-mission";
 import type { HomePosition, MissionItem } from "../mission";
 import { useState, useCallback, useRef } from "react";
 
-type PlannerPanelProps = {
+type MissionPanelProps = {
   vehicle: ReturnType<typeof useVehicle>;
   mission: ReturnType<typeof useMission>;
 };
@@ -33,7 +33,7 @@ function findNearestWaypoint(items: MissionItem[], lat: number, lng: number): nu
   return nearest;
 }
 
-export function PlannerPanel({ vehicle, mission }: PlannerPanelProps) {
+export function MissionPanel({ vehicle, mission }: MissionPanelProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
 
