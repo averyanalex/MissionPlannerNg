@@ -164,10 +164,14 @@ export function Sidebar({ vehicle }: SidebarProps) {
               className="w-16 rounded-md border border-border bg-bg-input px-2 py-1.5 text-sm text-text-primary"
             />
             <span className="text-xs text-text-muted">m</span>
-            <Button variant="secondary" size="sm" className="flex-1" onClick={takeoff} disabled={!connected}>
+            <Button variant="secondary" size="sm" className="flex-1" onClick={takeoff}
+              disabled={!connected || vehicleState?.mode_name?.toUpperCase() !== "GUIDED"}>
               Takeoff
             </Button>
           </div>
+          {connected && vehicleState && vehicleState.mode_name?.toUpperCase() !== "GUIDED" && (
+            <p className="text-[10px] text-text-muted">Switch to GUIDED to enable takeoff</p>
+          )}
 
           <div className="flex gap-1.5">
             {findModeNumber("RTL") !== null && (
