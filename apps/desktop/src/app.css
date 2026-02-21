@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+@theme {
+  --color-bg-primary: #12171d;
+  --color-bg-secondary: #171e27;
+  --color-bg-tertiary: #202a36;
+  --color-bg-input: #101924;
+  --color-border: #263548;
+  --color-border-light: #304154;
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #9cb2c7;
+  --color-text-muted: #6b8299;
+  --color-accent: #12b9ff;
+  --color-accent-hover: #0ea5e9;
+  --color-danger: #ff4444;
+  --color-warning: #ffb020;
+  --color-success: #57e38b;
+}
+
+/* Base resets */
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color-scheme: dark;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+}
+
+/* Map markers — must stay as regular CSS since MapLibre creates DOM elements */
+.vehicle-marker {
+  width: 32px;
+  height: 32px;
+  cursor: default;
+}
+
+.vehicle-marker svg {
+  transition: transform 0.3s ease;
+}
+
+.mission-pin {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #072035;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #03101a;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mission-pin.is-selected {
+  background: var(--color-warning);
+  transform: scale(1.08);
+}
+
+.mission-pin.is-home {
+  background: var(--color-success);
+}
+
+.mission-pin.is-current {
+  background: var(--color-danger);
+  animation: pulse-current 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-current {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(255, 68, 68, 0); }
+}

@@ -3,7 +3,7 @@ import maplibregl, {
   type GeoJSONSource,
   type Map as MapLibreMap,
   type Marker,
-  type MapMouseEvent
+  type MapMouseEvent,
 } from "maplibre-gl";
 import type { HomePosition, MissionItem } from "../mission";
 
@@ -24,13 +24,19 @@ type MissionMapProps = {
   onAddWaypoint?: (latDeg: number, lonDeg: number) => void;
   onSelectSeq?: (seq: number | null) => void;
   onRightClick?: (latDeg: number, lonDeg: number) => void;
+  onMoveWaypoint?: (seq: number, latDeg: number, lonDeg: number) => void;
+  onContextMenu?: (lat: number, lng: number, screenX: number, screenY: number) => void;
   readOnly?: boolean;
   vehiclePosition?: { latitude_deg: number; longitude_deg: number; heading_deg: number } | null;
   currentMissionSeq?: number | null;
   followVehicle?: boolean;
 };
 
-export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq, onRightClick, readOnly, vehiclePosition, currentMissionSeq, followVehicle }: MissionMapProps) {
+export function MissionMap({
+  missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq,
+  onRightClick, onMoveWaypoint, onContextMenu, readOnly,
+  vehiclePosition, currentMissionSeq, followVehicle,
+}: MissionMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<number, Marker>>(new Map());
@@ -40,18 +46,19 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   const onAddWaypointRef = useRef(onAddWaypoint);
   const onSelectSeqRef = useRef(onSelectSeq);
   const onRightClickRef = useRef(onRightClick);
+  const onMoveWaypointRef = useRef(onMoveWaypoint);
+  const onContextMenuRef = useRef(onContextMenu);
   const readOnlyRef = useRef(readOnly);
-  const missionGeoJsonRef = useRef<any>({
-    type: "FeatureCollection",
-    features: []
-  });
+  const missionGeoJsonRef = useRef<any>({ type: "FeatureCollection", features: [] });
 
   useEffect(() => {
     onAddWaypointRef.current = onAddWaypoint;
     onSelectSeqRef.current = onSelectSeq;
     onRightClickRef.current = onRightClick;
+    onMoveWaypointRef.current = onMoveWaypoint;
+    onContextMenuRef.current = onContextMenu;
     readOnlyRef.current = readOnly;
-  }, [onAddWaypoint, onSelectSeq, onRightClick, readOnly]);
+  }, [onAddWaypoint, onSelectSeq, onRightClick, onMoveWaypoint, onContextMenu, readOnly]);
 
   const missionGeoJson = useMemo(() => {
     const lineCoordinates: [number, number][] = [];
@@ -65,41 +72,31 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
     }
 
     const features: any[] = [];
-
     if (lineCoordinates.length >= 2) {
       features.push({
         type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: lineCoordinates
-        },
-        properties: {
-          kind: "mission-line"
-        }
+        geometry: { type: "LineString", coordinates: lineCoordinates },
+        properties: { kind: "mission-line" },
       });
     }
 
-    return {
-      type: "FeatureCollection" as const,
-      features
-    };
+    return { type: "FeatureCollection" as const, features };
   }, [missionItems, homePosition]);
 
   useEffect(() => {
     missionGeoJsonRef.current = missionGeoJson;
   }, [missionGeoJson]);
 
+  // Initialize map
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) {
-      return;
-    }
+    if (!containerRef.current || mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
       pitch: 60,
-      maxPitch: 85
+      maxPitch: 85,
     });
 
     map.setStyle(BASE_STYLE_URL, {
@@ -108,36 +105,17 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
         style.projection = { type: "globe" };
         style.sources = {
           ...style.sources,
-          satelliteSource: {
-            type: "raster",
-            tiles: [SATELLITE_TILE_URL],
-            tileSize: 256
-          },
-          terrainSource: {
-            type: "raster-dem",
-            url: DEM_TILESET_URL,
-            tileSize: 256
-          },
-          hillshadeSource: {
-            type: "raster-dem",
-            url: DEM_TILESET_URL,
-            tileSize: 256
-          }
+          satelliteSource: { type: "raster", tiles: [SATELLITE_TILE_URL], tileSize: 256 },
+          terrainSource: { type: "raster-dem", url: DEM_TILESET_URL, tileSize: 256 },
+          hillshadeSource: { type: "raster-dem", url: DEM_TILESET_URL, tileSize: 256 },
         };
-        style.terrain = {
-          source: "terrainSource",
-          exaggeration: 1.25
-        };
-        style.sky = {
-          "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 2, 0]
-        };
+        style.terrain = { source: "terrainSource", exaggeration: 1.25 };
+        style.sky = { "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 2, 0] };
 
         style.layers.push({
-          id: "hills",
-          type: "hillshade",
-          source: "hillshadeSource",
+          id: "hills", type: "hillshade", source: "hillshadeSource",
           layout: { visibility: "visible" },
-          paint: { "hillshade-shadow-color": "#473B24" }
+          paint: { "hillshade-shadow-color": "#473B24" },
         });
 
         const firstNonFillLayer = style.layers.find(
@@ -145,63 +123,33 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
         );
         if (firstNonFillLayer) {
           style.layers.splice(style.layers.indexOf(firstNonFillLayer), 0, {
-            id: "satellite",
-            type: "raster",
-            source: "satelliteSource",
+            id: "satellite", type: "raster", source: "satelliteSource",
             layout: { visibility: "visible" },
-            paint: { "raster-opacity": 1 }
+            paint: { "raster-opacity": 1 },
           });
         }
 
         return style;
-      }
+      },
     });
 
-    map.addControl(
-      new maplibregl.NavigationControl({
-        showZoom: true,
-        showCompass: true,
-        visualizePitch: true
-      }),
-      "top-right"
-    );
+    map.addControl(new maplibregl.NavigationControl({ showZoom: true, showCompass: true, visualizePitch: true }), "top-right");
     map.addControl(new maplibregl.GlobeControl(), "top-right");
-    map.addControl(
-      new maplibregl.TerrainControl({
-        source: "terrainSource",
-        exaggeration: 1.25
-      }),
-      "top-right"
-    );
+    map.addControl(new maplibregl.TerrainControl({ source: "terrainSource", exaggeration: 1.25 }), "top-right");
 
     map.on("style.load", () => {
       if (!map.getSource(SOURCE_ID)) {
-        map.addSource(SOURCE_ID, {
-          type: "geojson",
-          data: {
-            type: "FeatureCollection",
-            features: []
-          }
-        });
+        map.addSource(SOURCE_ID, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       }
-
       if (!map.getLayer(LINE_LAYER_ID)) {
         map.addLayer({
-          id: LINE_LAYER_ID,
-          type: "line",
-          source: SOURCE_ID,
+          id: LINE_LAYER_ID, type: "line", source: SOURCE_ID,
           filter: ["==", ["geometry-type"], "LineString"],
-          paint: {
-            "line-color": "#78d6ff",
-            "line-width": 4
-          }
+          paint: { "line-color": "#78d6ff", "line-width": 4 },
         });
       }
-
       const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
-      if (source) {
-        source.setData(missionGeoJsonRef.current);
-      }
+      if (source) source.setData(missionGeoJsonRef.current);
     });
 
     map.on("click", (event: MapMouseEvent) => {
@@ -210,53 +158,42 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
     });
 
     map.on("contextmenu", (event: MapMouseEvent) => {
-      onRightClickRef.current?.(event.lngLat.lat, event.lngLat.lng);
+      event.preventDefault();
+      if (onContextMenuRef.current) {
+        onContextMenuRef.current(event.lngLat.lat, event.lngLat.lng, event.point.x, event.point.y);
+      } else {
+        onRightClickRef.current?.(event.lngLat.lat, event.lngLat.lng);
+      }
     });
 
     mapRef.current = map;
 
     return () => {
-      for (const marker of markersRef.current.values()) {
-        marker.remove();
-      }
+      for (const marker of markersRef.current.values()) marker.remove();
       markersRef.current.clear();
-      if (homeMarkerRef.current) {
-        homeMarkerRef.current.remove();
-        homeMarkerRef.current = null;
-      }
-      if (vehicleMarkerRef.current) {
-        vehicleMarkerRef.current.remove();
-        vehicleMarkerRef.current = null;
-      }
+      if (homeMarkerRef.current) { homeMarkerRef.current.remove(); homeMarkerRef.current = null; }
+      if (vehicleMarkerRef.current) { vehicleMarkerRef.current.remove(); vehicleMarkerRef.current = null; }
       map.remove();
       mapRef.current = null;
       hasSetInitialViewport.current = false;
     };
   }, []);
 
+  // Update GeoJSON line
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) {
-      return;
-    }
-
+    if (!map || !map.isStyleLoaded()) return;
     const source = map.getSource(SOURCE_ID) as GeoJSONSource | undefined;
-    if (!source) {
-      return;
-    }
-    source.setData(missionGeoJson);
+    if (source) source.setData(missionGeoJson);
   }, [missionGeoJson]);
 
   // Update home marker
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
-      return;
-    }
+    if (!map) return;
 
     if (homePosition) {
       const lngLat: [number, number] = [homePosition.longitude_deg, homePosition.latitude_deg];
-
       if (homeMarkerRef.current) {
         homeMarkerRef.current.setLngLat(lngLat);
       } else {
@@ -264,14 +201,9 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
         markerEl.type = "button";
         markerEl.className = "mission-pin is-home";
         markerEl.textContent = "H";
-        markerEl.addEventListener("click", (event) => {
-          event.stopPropagation();
-        });
+        markerEl.addEventListener("click", (e) => e.stopPropagation());
 
-        homeMarkerRef.current = new maplibregl.Marker({
-          element: markerEl,
-          anchor: "bottom"
-        })
+        homeMarkerRef.current = new maplibregl.Marker({ element: markerEl, anchor: "bottom" })
           .setLngLat(lngLat)
           .addTo(map);
       }
@@ -284,9 +216,7 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   // Update waypoint markers
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
-      return;
-    }
+    if (!map) return;
 
     const nextSeqs = new Set(missionItems.map((item) => item.seq));
     for (const [seq, marker] of markersRef.current.entries()) {
@@ -306,19 +236,30 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
         const markerEl = document.createElement("button");
         markerEl.type = "button";
         markerEl.className = "mission-pin";
+
+        const isDraggable = !readOnly;
+
         if (!readOnly) {
-          markerEl.addEventListener("click", (event) => {
-            event.stopPropagation();
+          markerEl.addEventListener("click", (e) => {
+            e.stopPropagation();
             onSelectSeqRef.current?.(item.seq);
           });
         }
 
         const marker = new maplibregl.Marker({
           element: markerEl,
-          anchor: "bottom"
+          anchor: "bottom",
+          draggable: isDraggable,
         })
           .setLngLat(lngLat)
           .addTo(map);
+
+        if (isDraggable) {
+          marker.on("dragend", () => {
+            const pos = marker.getLngLat();
+            onMoveWaypointRef.current?.(item.seq, pos.lat, pos.lng);
+          });
+        }
 
         markersRef.current.set(item.seq, marker);
       }
@@ -346,9 +287,7 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
       if (vehicleMarkerRef.current) {
         vehicleMarkerRef.current.setLngLat(lngLat);
         const svg = vehicleMarkerRef.current.getElement().querySelector("svg");
-        if (svg) {
-          svg.style.transform = `rotate(${vehiclePosition.heading_deg}deg)`;
-        }
+        if (svg) svg.style.transform = `rotate(${vehiclePosition.heading_deg}deg)`;
       } else {
         const el = document.createElement("div");
         el.className = "vehicle-marker";
@@ -371,26 +310,18 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   // Fit bounds on initial load
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || hasSetInitialViewport.current) {
-      return;
-    }
+    if (!map || hasSetInitialViewport.current) return;
 
     const hasItems = missionItems.length > 0 || homePosition !== null;
-    if (!hasItems) {
-      return;
-    }
+    if (!hasItems) return;
 
     const bounds = new maplibregl.LngLatBounds();
-    if (homePosition) {
-      bounds.extend([homePosition.longitude_deg, homePosition.latitude_deg]);
-    }
-    for (const item of missionItems) {
-      bounds.extend([item.y / 1e7, item.x / 1e7]);
-    }
+    if (homePosition) bounds.extend([homePosition.longitude_deg, homePosition.latitude_deg]);
+    for (const item of missionItems) bounds.extend([item.y / 1e7, item.x / 1e7]);
 
     map.fitBounds(bounds, { padding: 48, maxZoom: 15, duration: 0 });
     hasSetInitialViewport.current = true;
   }, [missionItems, homePosition]);
 
-  return <div className="mission-map" ref={containerRef} />;
+  return <div className="h-full w-full" ref={containerRef} />;
 }
