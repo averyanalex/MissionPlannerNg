@@ -425,6 +425,48 @@ body,
   margin: 6px 0 0;
 }
 
+.command-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.command-row button {
+  border: 1px solid #3a5068;
+  border-radius: 4px;
+  background: #1f2d3d;
+  color: #d7e6f6;
+  padding: 6px 10px;
+}
+
+.command-row button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.command-row select {
+  flex: 1;
+  border: 1px solid #375069;
+  border-radius: 4px;
+  background: #101924;
+  color: #d7e6f6;
+  padding: 6px;
+}
+
+.command-row input {
+  width: 60px;
+  border: 1px solid #375069;
+  border-radius: 4px;
+  background: #101924;
+  color: #d7e6f6;
+  padding: 6px;
+}
+
+.armed-text {
+  color: #ff6b6b;
+}
+
 @media (max-width: 900px) {
   .main-grid {
     grid-template-columns: 1fr;

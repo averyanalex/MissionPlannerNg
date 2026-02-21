@@ -1,6 +1,6 @@
 SHELL := /usr/bin/env bash
 
-SITL_IMAGE ?= radarku/ardupilot-sitl
+SITL_IMAGE ?= radarku/ardupilot-sitl:eff32c1f98152ac3d1dc09a1e475733b73ce569f
 SITL_CONTAINER ?= ardupilot-sitl
 SITL_TCP_PORT ?= 5760
 SITL_UDP_PORT ?= 14550
@@ -30,7 +30,10 @@ help:
 sitl-up:
 	docker rm -f "$(SITL_CONTAINER)" >/dev/null 2>&1 || true
 	docker pull "$(SITL_IMAGE)"
-	docker run -d --rm --name "$(SITL_CONTAINER)" -p "$(SITL_TCP_PORT):5760" "$(SITL_IMAGE)"
+	docker run -d --rm --name "$(SITL_CONTAINER)" -p "$(SITL_TCP_PORT):5760" \
+	  --entrypoint /ardupilot/build/sitl/bin/arducopter "$(SITL_IMAGE)" \
+	  --model + --speedup 1 --defaults /ardupilot/Tools/autotest/default_params/copter.parm \
+	  --home 42.3898,-71.1476,14.0,270.0 -w
 
 sitl-down:
 	docker rm -f "$(SITL_CONTAINER)" >/dev/null 2>&1 || true

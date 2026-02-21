@@ -121,6 +121,52 @@ MP_SITL_UDP_BIND=0.0.0.0:14550 cargo test -p mp-telemetry-core --test sitl_round
 docker rm -f ardupilot-sitl
 ```
 
+## Flight Operations (GUI)
+
+After connecting to a vehicle (UDP or serial), the left panel shows vehicle status and flight controls.
+
+### Connect
+
+1. Select **UDP** or **Serial** mode
+2. For UDP: enter bind address (default `0.0.0.0:14550`)
+3. Click **Connect**
+4. Wait for status to show "connected" and telemetry to appear
+
+### Arm and Disarm
+
+- Click **Arm** to arm the vehicle (requires GPS fix and pre-arm checks to pass)
+- Click **Disarm** to disarm
+
+Arming may take a few seconds after a fresh SITL start while the EKF converges.
+
+### Change Flight Mode
+
+Use the mode dropdown in the left panel to switch modes (STABILIZE, GUIDED, LOITER, RTL, LAND, etc.). The dropdown auto-populates based on vehicle type after the first heartbeat.
+
+Quick-action buttons for **RTL**, **Land**, and **Loiter** are available below the dropdown.
+
+### Takeoff
+
+1. Enter a target altitude in meters (default 10)
+2. Click **Takeoff**
+
+Takeoff automatically sets GUIDED mode, arms the vehicle, and sends the NAV_TAKEOFF command. You do not need to arm or set mode manually beforehand.
+
+### Guided Goto (Fly to Point)
+
+On the **Flight Data** tab, **right-click** anywhere on the map to send the vehicle to that location. The vehicle must be armed and in GUIDED mode. The goto command uses the vehicle's current altitude.
+
+### Land / Return to Launch
+
+- Click **Land** to switch to LAND mode (vehicle descends and auto-disarms on touchdown)
+- Click **RTL** to return to the launch point and land
+
+### Typical SITL Flight Sequence
+
+```
+Connect → Takeoff (10m) → right-click map to fly around → Land or RTL
+```
+
 ## CI
 
 - `.github/workflows/ci.yml`: frontend typecheck/build + Rust check/tests on every push and PR

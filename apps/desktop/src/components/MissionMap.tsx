@@ -23,13 +23,14 @@ type MissionMapProps = {
   selectedSeq: number | null;
   onAddWaypoint?: (latDeg: number, lonDeg: number) => void;
   onSelectSeq?: (seq: number | null) => void;
+  onRightClick?: (latDeg: number, lonDeg: number) => void;
   readOnly?: boolean;
   vehiclePosition?: { latitude_deg: number; longitude_deg: number; heading_deg: number } | null;
   currentMissionSeq?: number | null;
   followVehicle?: boolean;
 };
 
-export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq, readOnly, vehiclePosition, currentMissionSeq, followVehicle }: MissionMapProps) {
+export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypoint, onSelectSeq, onRightClick, readOnly, vehiclePosition, currentMissionSeq, followVehicle }: MissionMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Map<number, Marker>>(new Map());
@@ -38,6 +39,7 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   const hasSetInitialViewport = useRef(false);
   const onAddWaypointRef = useRef(onAddWaypoint);
   const onSelectSeqRef = useRef(onSelectSeq);
+  const onRightClickRef = useRef(onRightClick);
   const readOnlyRef = useRef(readOnly);
   const missionGeoJsonRef = useRef<any>({
     type: "FeatureCollection",
@@ -47,8 +49,9 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
   useEffect(() => {
     onAddWaypointRef.current = onAddWaypoint;
     onSelectSeqRef.current = onSelectSeq;
+    onRightClickRef.current = onRightClick;
     readOnlyRef.current = readOnly;
-  }, [onAddWaypoint, onSelectSeq, readOnly]);
+  }, [onAddWaypoint, onSelectSeq, onRightClick, readOnly]);
 
   const missionGeoJson = useMemo(() => {
     const lineCoordinates: [number, number][] = [];
@@ -204,6 +207,10 @@ export function MissionMap({ missionItems, homePosition, selectedSeq, onAddWaypo
     map.on("click", (event: MapMouseEvent) => {
       if (readOnlyRef.current) return;
       onAddWaypointRef.current?.(event.lngLat.lat, event.lngLat.lng);
+    });
+
+    map.on("contextmenu", (event: MapMouseEvent) => {
+      onRightClickRef.current?.(event.lngLat.lat, event.lngLat.lng);
     });
 
     mapRef.current = map;

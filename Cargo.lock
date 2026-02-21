@@ -1803,6 +1803,7 @@ version = "0.1.0"
 dependencies = [
  "mp-mission-core",
  "mp-telemetry-core",
+ "serde",
  "tauri",
  "tauri-build",
 ]

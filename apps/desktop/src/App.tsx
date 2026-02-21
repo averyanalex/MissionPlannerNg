@@ -20,15 +20,24 @@ import {
   type TransferProgress
 } from "./mission";
 import {
+  armVehicle,
   connectLink,
+  disarmVehicle,
   disconnectLink,
+  getAvailableModes,
   listSerialPorts,
+  setFlightMode,
   subscribeLinkState,
   subscribeHomePosition,
   subscribeTelemetry,
+  subscribeVehicleState,
+  vehicleGuidedGoto,
+  vehicleTakeoff,
   type ConnectRequest,
+  type FlightModeEntry,
   type LinkStateEvent,
-  type Telemetry
+  type Telemetry,
+  type VehicleStateEvent
 } from "./telemetry";
 import { MissionMap } from "./components/MissionMap";
 import "./styles.css";
@@ -70,6 +79,9 @@ export default function App() {
   const [homeLonInput, setHomeLonInput] = useState("");
   const [homeAltInput, setHomeAltInput] = useState("");
   const [followVehicle, setFollowVehicle] = useState(true);
+  const [vehicleState, setVehicleState] = useState<VehicleStateEvent | null>(null);
+  const [availableModes, setAvailableModes] = useState<FlightModeEntry[]>([]);
+  const [takeoffAlt, setTakeoffAlt] = useState("10");
   const browserMockTimer = useRef<number | null>(null);
 
   const transferActive =
@@ -91,6 +103,7 @@ export default function App() {
     let stopTelemetry: (() => void) | null = null;
     let stopLinkState: (() => void) | null = null;
     let stopHome: (() => void) | null = null;
+    let stopVehicleState: (() => void) | null = null;
 
     (async () => {
       try {
@@ -128,6 +141,13 @@ export default function App() {
             return "vehicle";
           });
         });
+
+        stopVehicleState = await subscribeVehicleState((event) => {
+          if (sessionId !== null && event.session_id !== sessionId) {
+            return;
+          }
+          setVehicleState(event);
+        });
       } catch {
         setSource("browser-mock");
       }
@@ -142,6 +162,9 @@ export default function App() {
       }
       if (stopHome) {
         stopHome();
+      }
+      if (stopVehicleState) {
+        stopVehicleState();
       }
       stopBrowserMock();
     };
@@ -174,6 +197,52 @@ export default function App() {
       }
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionId && vehicleState) {
+      getAvailableModes(sessionId).then(setAvailableModes).catch(() => {});
+    } else {
+      setAvailableModes([]);
+    }
+  }, [sessionId, vehicleState?.autopilot, vehicleState?.vehicle_type]);
+
+  async function handleArm() {
+    if (!sessionId) { setError("connect first"); return; }
+    try { await armVehicle(sessionId, false); setError(null); }
+    catch (err) { setError(asErrorMessage(err)); }
+  }
+
+  async function handleDisarm() {
+    if (!sessionId) { setError("connect first"); return; }
+    try { await disarmVehicle(sessionId, false); setError(null); }
+    catch (err) { setError(asErrorMessage(err)); }
+  }
+
+  async function handleSetMode(customMode: number) {
+    if (!sessionId) { setError("connect first"); return; }
+    try { await setFlightMode(sessionId, customMode); setError(null); }
+    catch (err) { setError(asErrorMessage(err)); }
+  }
+
+  async function handleTakeoff() {
+    if (!sessionId) { setError("connect first"); return; }
+    const alt = Number(takeoffAlt);
+    if (!Number.isFinite(alt) || alt <= 0) { setError("invalid takeoff altitude"); return; }
+    try { await vehicleTakeoff(sessionId, alt); setError(null); }
+    catch (err) { setError(asErrorMessage(err)); }
+  }
+
+  async function handleGuidedGoto(latDeg: number, lonDeg: number) {
+    if (!sessionId) { setError("connect first"); return; }
+    const alt = telemetry.altitude_m ?? 25;
+    try { await vehicleGuidedGoto(sessionId, latDeg, lonDeg, alt); setError(null); }
+    catch (err) { setError(asErrorMessage(err)); }
+  }
+
+  function findModeNumber(name: string): number | null {
+    const entry = availableModes.find(m => m.name.toUpperCase() === name.toUpperCase());
+    return entry?.custom_mode ?? null;
+  }
 
   async function refreshSerialPorts() {
     try {
@@ -556,6 +625,15 @@ export default function App() {
         latitude_deg: 47.397742 + 0.002 * Math.sin(tick * 4 * Math.PI / 180),
         longitude_deg: 8.545594 + 0.002 * Math.cos(tick * 4 * Math.PI / 180)
       });
+      setVehicleState({
+        session_id: "browser-mock",
+        armed: tick > 5,
+        flight_mode: 4,
+        flight_mode_name: "GUIDED",
+        system_status: "active",
+        vehicle_type: "quadrotor",
+        autopilot: "ardupilotmega",
+      });
     }, 1000);
   }
 
@@ -647,6 +725,18 @@ export default function App() {
           </div>
 
           <div className="stat-card">
+            <span>Vehicle</span>
+            <strong className={vehicleState?.armed ? "armed-text" : ""}>
+              {vehicleState ? (vehicleState.armed ? "ARMED" : "DISARMED") : "--"}
+            </strong>
+          </div>
+
+          <div className="stat-card">
+            <span>Mode</span>
+            <strong>{vehicleState?.flight_mode_name ?? "--"}</strong>
+          </div>
+
+          <div className="stat-card">
             <span>Altitude</span>
             <strong>{formatMaybe(telemetry.altitude_m)} m</strong>
           </div>
@@ -657,6 +747,41 @@ export default function App() {
           <div className="stat-card">
             <span>Battery</span>
             <strong>{formatMaybe(telemetry.fuel_pct)} %</strong>
+          </div>
+
+          <div className="command-row">
+            <button onClick={handleArm} disabled={!sessionId}>Arm</button>
+            <button className="secondary" onClick={handleDisarm} disabled={!sessionId}>Disarm</button>
+          </div>
+
+          <div className="command-row">
+            <select
+              value={vehicleState?.flight_mode ?? ""}
+              onChange={(e) => handleSetMode(Number(e.target.value))}
+              disabled={!sessionId || availableModes.length === 0}
+            >
+              {availableModes.map((m) => (
+                <option key={m.custom_mode} value={m.custom_mode}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="command-row">
+            <input type="number" value={takeoffAlt} onChange={(e) => setTakeoffAlt(e.target.value)} style={{width: 60}} />
+            <span>m</span>
+            <button onClick={handleTakeoff} disabled={!sessionId}>Takeoff</button>
+          </div>
+
+          <div className="command-row">
+            {findModeNumber("RTL") !== null && (
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("RTL")!)} disabled={!sessionId}>RTL</button>
+            )}
+            {findModeNumber("LAND") !== null && (
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LAND")!)} disabled={!sessionId}>Land</button>
+            )}
+            {findModeNumber("LOITER") !== null && (
+              <button className="secondary" onClick={() => handleSetMode(findModeNumber("LOITER")!)} disabled={!sessionId}>Loiter</button>
+            )}
           </div>
 
           <div className="meta-list">
@@ -678,6 +803,7 @@ export default function App() {
                   homePosition={missionType === "mission" ? homePosition : null}
                   selectedSeq={null}
                   readOnly
+                  onRightClick={handleGuidedGoto}
                   vehiclePosition={vehiclePosition}
                   currentMissionSeq={missionState?.current_seq ?? null}
                   followVehicle={followVehicle}
@@ -689,7 +815,7 @@ export default function App() {
               <div className="flight-status-bar">
                 <div className="flight-status-item">
                   <span className="flight-status-label">Mode</span>
-                  <span className="flight-status-value">{missionState?.mission_state ?? "unknown"}</span>
+                  <span className="flight-status-value">{vehicleState?.flight_mode_name ?? "--"}</span>
                 </div>
                 <div className="flight-status-item">
                   <span className="flight-status-label">Waypoint</span>

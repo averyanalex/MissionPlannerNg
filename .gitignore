@@ -11,3 +11,5 @@ result
 
 *.log
 .DS_Store
+
+/mav.*

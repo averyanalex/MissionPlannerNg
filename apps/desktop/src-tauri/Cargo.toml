@@ -9,6 +9,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 mp-mission-core = { path = "../../../crates/mp-mission-core" }
 mp-telemetry-core = { path = "../../../crates/mp-telemetry-core" }
+serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 
 [features]

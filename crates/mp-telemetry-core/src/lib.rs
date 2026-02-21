@@ -1,3 +1,5 @@
+pub mod modes;
+
 use mavlink::common;
 use mavlink::{connect, MavConnection, MavHeader};
 use mp_mission_core::{
@@ -19,6 +21,8 @@ use uuid::Uuid;
 const GCS_SYSTEM_ID: u8 = 255;
 const GCS_COMPONENT_ID: u8 = 190;
 const MISSION_TIMEOUT_ERROR: &str = "mission operation timeout";
+const MAGIC_FORCE_ARM_VALUE: f32 = 2989.0;
+const MAGIC_FORCE_DISARM_VALUE: f32 = 21196.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -77,6 +81,17 @@ pub struct HomePositionEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VehicleStateEvent {
+    pub session_id: String,
+    pub armed: bool,
+    pub flight_mode: u32,
+    pub flight_mode_name: String,
+    pub system_status: String,
+    pub vehicle_type: String,
+    pub autopilot: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub endpoint: LinkEndpoint,
 }
@@ -94,6 +109,7 @@ pub enum CoreEvent {
     MissionError(TransferError),
     MissionState(MissionStateEvent),
     HomePosition(HomePositionEvent),
+    VehicleState(VehicleStateEvent),
 }
 
 struct SessionHandle {
@@ -249,6 +265,160 @@ impl LinkManager {
             let _ = self.disconnect(&id);
         }
     }
+
+    fn send_command(
+        &self,
+        session_id: &str,
+        command: common::MavCmd,
+        params: [f32; 7],
+    ) -> Result<(), String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::CommandLong {
+                command,
+                params,
+                reply_tx,
+            })
+            .map_err(|_| String::from("session offline"))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| String::from("command timed out"))?
+    }
+
+    fn resolve_guided_mode(&self, session_id: &str) -> Result<u32, String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::QueryVehicleInfo { reply_tx })
+            .map_err(|_| String::from("session offline"))?;
+        let info = reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|_| String::from("query timed out"))??;
+        modes::mode_number(info.autopilot, info.vehicle_type, "GUIDED")
+            .ok_or_else(|| String::from("GUIDED mode not available for this vehicle"))
+    }
+
+    pub fn arm_vehicle(&self, session_id: &str, force: bool) -> Result<(), String> {
+        self.send_command(
+            session_id,
+            common::MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+            [
+                1.0,
+                if force { MAGIC_FORCE_ARM_VALUE } else { 0.0 },
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        )
+    }
+
+    pub fn disarm_vehicle(&self, session_id: &str, force: bool) -> Result<(), String> {
+        self.send_command(
+            session_id,
+            common::MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+            [
+                0.0,
+                if force { MAGIC_FORCE_DISARM_VALUE } else { 0.0 },
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ],
+        )
+    }
+
+    pub fn set_flight_mode(&self, session_id: &str, custom_mode: u32) -> Result<(), String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::SetMode {
+                custom_mode,
+                reply_tx,
+            })
+            .map_err(|_| String::from("session offline"))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| String::from("set mode timed out"))?
+    }
+
+    pub fn takeoff(&self, session_id: &str, altitude_m: f32) -> Result<(), String> {
+        // MissionPlanner sequence: GUIDED → arm → takeoff
+        let guided_mode = self.resolve_guided_mode(session_id)?;
+        self.set_flight_mode(session_id, guided_mode)?;
+        self.arm_vehicle(session_id, false)?;
+        self.send_command(
+            session_id,
+            common::MavCmd::MAV_CMD_NAV_TAKEOFF,
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, altitude_m],
+        )
+    }
+
+    pub fn guided_goto(
+        &self,
+        session_id: &str,
+        lat_e7: i32,
+        lon_e7: i32,
+        alt_m: f32,
+    ) -> Result<(), String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::GuidedGoto {
+                lat_e7,
+                lon_e7,
+                alt_m,
+                reply_tx,
+            })
+            .map_err(|_| String::from("session offline"))?;
+        reply_rx
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| String::from("guided goto timed out"))?
+    }
+
+    pub fn get_available_modes(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<(u32, String)>, String> {
+        let handle = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| String::from("session not found"))?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        handle
+            .command_tx
+            .send(SessionCommand::QueryVehicleInfo { reply_tx })
+            .map_err(|_| String::from("session offline"))?;
+        let info = reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|_| String::from("query timed out"))??;
+        Ok(modes::available_modes(info.autopilot, info.vehicle_type))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VehicleTargetInfo {
+    pub autopilot: common::MavAutopilot,
+    pub vehicle_type: common::MavType,
 }
 
 enum SessionCommand {
@@ -266,6 +436,24 @@ enum SessionCommand {
     },
     SetCurrent {
         seq: u16,
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
+    CommandLong {
+        command: common::MavCmd,
+        params: [f32; 7],
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
+    GuidedGoto {
+        lat_e7: i32,
+        lon_e7: i32,
+        alt_m: f32,
+        reply_tx: mpsc::Sender<Result<(), String>>,
+    },
+    QueryVehicleInfo {
+        reply_tx: mpsc::Sender<Result<VehicleTargetInfo, String>>,
+    },
+    SetMode {
+        custom_mode: u32,
         reply_tx: mpsc::Sender<Result<(), String>>,
     },
     Shutdown,
@@ -356,6 +544,7 @@ fn run_session(
                 }
                 maybe_emit_mission_state(&event_tx, &session_id, &message);
                 maybe_emit_home_position(&event_tx, &session_id, &message);
+                maybe_emit_vehicle_state(&event_tx, &session_id, &message, &vehicle_target);
             }
             Err(err) => {
                 if is_non_fatal_read_error(&err) {
@@ -434,6 +623,59 @@ fn handle_session_command(
             let _ = reply_tx.send(result);
         }
         SessionCommand::Shutdown => {}
+        SessionCommand::CommandLong {
+            command,
+            params,
+            reply_tx,
+        } => {
+            let result = send_command_long_ack(
+                session_id,
+                event_tx,
+                connection,
+                aggregate,
+                vehicle_target,
+                stop_flag,
+                cancel_flag,
+                command,
+                params,
+            );
+            let _ = reply_tx.send(result);
+        }
+        SessionCommand::GuidedGoto {
+            lat_e7,
+            lon_e7,
+            alt_m,
+            reply_tx,
+        } => {
+            let result = guided_goto_internal(connection, vehicle_target, lat_e7, lon_e7, alt_m);
+            let _ = reply_tx.send(result);
+        }
+        SessionCommand::QueryVehicleInfo { reply_tx } => {
+            let result = match vehicle_target {
+                Some(t) => Ok(VehicleTargetInfo {
+                    autopilot: t.autopilot,
+                    vehicle_type: t.vehicle_type,
+                }),
+                None => Err(String::from("vehicle target unknown: wait for heartbeat")),
+            };
+            let _ = reply_tx.send(result);
+        }
+        SessionCommand::SetMode {
+            custom_mode,
+            reply_tx,
+        } => {
+            let result = set_mode_internal(
+                session_id,
+                event_tx,
+                connection,
+                aggregate,
+                vehicle_target,
+                stop_flag,
+                cancel_flag,
+                custom_mode,
+            );
+            let _ = reply_tx.send(result);
+        }
         SessionCommand::SetCurrent { seq, reply_tx } => {
             let result = mission_set_current_internal(
                 session_id,
@@ -448,6 +690,169 @@ fn handle_session_command(
             let _ = reply_tx.send(result);
         }
     }
+}
+
+fn set_mode_internal(
+    session_id: &str,
+    event_tx: &mpsc::Sender<CoreEvent>,
+    connection: &mut impl MavConnection<common::MavMessage>,
+    aggregate: &mut TelemetryAggregate,
+    vehicle_target: &mut Option<VehicleTarget>,
+    stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
+    custom_mode: u32,
+) -> Result<(), String> {
+    // Send COMMAND_LONG(DO_SET_MODE) with param1=1.0 (MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
+    let do_set_mode_result = send_command_long_ack(
+        session_id,
+        event_tx,
+        connection,
+        aggregate,
+        vehicle_target,
+        stop_flag,
+        cancel_flag,
+        common::MavCmd::MAV_CMD_DO_SET_MODE,
+        [1.0, custom_mode as f32, 0.0, 0.0, 0.0, 0.0, 0.0],
+    );
+
+    if do_set_mode_result.is_ok() {
+        return Ok(());
+    }
+
+    // COMMAND_LONG was not accepted; wait up to 2s for a HEARTBEAT confirming
+    // the new custom_mode (autopilot may have applied it without ACK).
+    match wait_for_message(
+        session_id,
+        event_tx,
+        connection,
+        aggregate,
+        vehicle_target,
+        stop_flag,
+        cancel_flag,
+        Duration::from_secs(2),
+        |msg| {
+            matches!(
+                msg,
+                common::MavMessage::HEARTBEAT(hb) if hb.custom_mode == custom_mode
+            )
+        },
+    ) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(format!(
+            "set_mode({custom_mode}) failed: COMMAND_LONG rejected and no confirming HEARTBEAT"
+        )),
+    }
+}
+
+fn send_command_long_ack(
+    session_id: &str,
+    event_tx: &mpsc::Sender<CoreEvent>,
+    connection: &mut impl MavConnection<common::MavMessage>,
+    aggregate: &mut TelemetryAggregate,
+    vehicle_target: &mut Option<VehicleTarget>,
+    stop_flag: &Arc<AtomicBool>,
+    cancel_flag: &Arc<AtomicBool>,
+    command: common::MavCmd,
+    params: [f32; 7],
+) -> Result<(), String> {
+    cancel_flag.store(false, Ordering::Relaxed);
+
+    let target = vehicle_target
+        .as_ref()
+        .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
+        .clone();
+
+    let retry_policy = RetryPolicy::default();
+    for _attempt in 0..=retry_policy.max_retries {
+        send_message(
+            connection,
+            common::MavMessage::COMMAND_LONG(common::COMMAND_LONG_DATA {
+                target_system: target.system_id,
+                target_component: target.component_id,
+                command,
+                confirmation: 0,
+                param1: params[0],
+                param2: params[1],
+                param3: params[2],
+                param4: params[3],
+                param5: params[4],
+                param6: params[5],
+                param7: params[6],
+            }),
+        )?;
+
+        match wait_for_message(
+            session_id,
+            event_tx,
+            connection,
+            aggregate,
+            vehicle_target,
+            stop_flag,
+            cancel_flag,
+            Duration::from_millis(retry_policy.request_timeout_ms),
+            |msg| matches!(msg, common::MavMessage::COMMAND_ACK(_)),
+        ) {
+            Ok(common::MavMessage::COMMAND_ACK(ack)) => {
+                if ack.command == command {
+                    if ack.result == common::MavResult::MAV_RESULT_ACCEPTED {
+                        return Ok(());
+                    }
+                    return Err(format!(
+                        "command {:?} rejected: {:?}",
+                        command, ack.result
+                    ));
+                }
+                // ACK for a different command — ignore and keep waiting
+            }
+            Ok(_) => {}
+            Err(err) if err == MISSION_TIMEOUT_ERROR => continue,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Err(format!("command {:?} timed out", command))
+}
+
+fn guided_goto_internal(
+    connection: &mut impl MavConnection<common::MavMessage>,
+    vehicle_target: &mut Option<VehicleTarget>,
+    lat_e7: i32,
+    lon_e7: i32,
+    alt_m: f32,
+) -> Result<(), String> {
+    let target = vehicle_target
+        .as_ref()
+        .ok_or_else(|| String::from("vehicle target unknown: wait for heartbeat"))?
+        .clone();
+
+    // type_mask: ignore everything except position (vx/vy/vz/ax/ay/az/yaw/yaw_rate)
+    // bits 3-10 set = 0b0000_0111_1111_1000 = 0x07F8
+    let type_mask =
+        common::PositionTargetTypemask::from_bits_truncate(0x07F8);
+
+    send_message(
+        connection,
+        common::MavMessage::SET_POSITION_TARGET_GLOBAL_INT(
+            common::SET_POSITION_TARGET_GLOBAL_INT_DATA {
+                time_boot_ms: 0,
+                target_system: target.system_id,
+                target_component: target.component_id,
+                coordinate_frame: common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                type_mask,
+                lat_int: lat_e7,
+                lon_int: lon_e7,
+                alt: alt_m,
+                vx: 0.0,
+                vy: 0.0,
+                vz: 0.0,
+                afx: 0.0,
+                afy: 0.0,
+                afz: 0.0,
+                yaw: 0.0,
+                yaw_rate: 0.0,
+            },
+        ),
+    )
 }
 
 fn mission_set_current_internal(
@@ -1062,6 +1467,7 @@ where
                 }
                 maybe_emit_mission_state(event_tx, session_id, &message);
                 maybe_emit_home_position(event_tx, session_id, &message);
+                maybe_emit_vehicle_state(event_tx, session_id, &message, vehicle_target);
                 if predicate(&message) {
                     return Ok(message);
                 }
@@ -1127,6 +1533,34 @@ fn maybe_emit_mission_state(
     }
 }
 
+fn maybe_emit_vehicle_state(
+    event_tx: &mpsc::Sender<CoreEvent>,
+    session_id: &str,
+    message: &common::MavMessage,
+    vehicle_target: &Option<VehicleTarget>,
+) {
+    if let common::MavMessage::HEARTBEAT(hb) = message {
+        let target = match vehicle_target {
+            Some(t) => t,
+            None => return,
+        };
+        let armed = hb
+            .base_mode
+            .contains(common::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED);
+        let flight_mode_name =
+            modes::mode_name(target.autopilot, target.vehicle_type, hb.custom_mode);
+        let _ = event_tx.send(CoreEvent::VehicleState(VehicleStateEvent {
+            session_id: session_id.to_string(),
+            armed,
+            flight_mode: hb.custom_mode,
+            flight_mode_name,
+            system_status: format!("{:?}", hb.system_status).to_lowercase(),
+            vehicle_type: format!("{:?}", hb.mavtype).to_lowercase(),
+            autopilot: format!("{:?}", hb.autopilot).to_lowercase(),
+        }));
+    }
+}
+
 fn maybe_emit_home_position(
     event_tx: &mpsc::Sender<CoreEvent>,
     session_id: &str,
@@ -1163,6 +1597,8 @@ fn send_message(
 struct VehicleTarget {
     system_id: u8,
     component_id: u8,
+    autopilot: common::MavAutopilot,
+    vehicle_type: common::MavType,
 }
 
 fn update_vehicle_target(
@@ -1174,15 +1610,19 @@ fn update_vehicle_target(
         return;
     }
 
-    if matches!(message, common::MavMessage::HEARTBEAT(_)) {
+    if let common::MavMessage::HEARTBEAT(hb) = message {
         *vehicle_target = Some(VehicleTarget {
             system_id: header.system_id,
             component_id: header.component_id,
+            autopilot: hb.autopilot,
+            vehicle_type: hb.mavtype,
         });
     } else if vehicle_target.is_none() {
         *vehicle_target = Some(VehicleTarget {
             system_id: header.system_id,
             component_id: header.component_id,
+            autopilot: common::MavAutopilot::MAV_AUTOPILOT_GENERIC,
+            vehicle_type: common::MavType::MAV_TYPE_GENERIC,
         });
     }
 }
@@ -1307,7 +1747,9 @@ fn is_non_fatal_read_error(error: &mavlink::error::MessageReadError) -> bool {
             io_error.kind() == std::io::ErrorKind::WouldBlock
                 || io_error.kind() == std::io::ErrorKind::TimedOut
         }
-        _ => false,
+        // Parse errors (unknown message IDs, invalid flags, etc.) are non-fatal:
+        // the message is malformed or unsupported but the connection is still alive.
+        mavlink::error::MessageReadError::Parse(_) => true,
     }
 }
 
@@ -1591,6 +2033,8 @@ mod tests {
             Some(VehicleTarget {
                 system_id: 1,
                 component_id: 1,
+                autopilot: common::MavAutopilot::MAV_AUTOPILOT_ARDUPILOTMEGA,
+                vehicle_type: common::MavType::MAV_TYPE_QUADROTOR,
             }),
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),

@@ -2,7 +2,9 @@ use mp_mission_core::{
     normalize_for_compare, plans_equivalent, CompareTolerance, HomePosition, MissionFrame,
     MissionItem, MissionPlan, MissionType,
 };
-use mp_telemetry_core::{ConnectRequest, CoreEvent, LinkEndpoint, LinkManager, LinkStatus};
+use mp_telemetry_core::{
+    ConnectRequest, CoreEvent, LinkEndpoint, LinkManager, LinkStatus, VehicleStateEvent,
+};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -270,5 +272,317 @@ fn waypoint(seq: u16, lat: f64, lon: f64, alt: f32) -> MissionItem {
         x: (lat * 1e7) as i32,
         y: (lon * 1e7) as i32,
         z: alt,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers for vehicle-state tests
+// ---------------------------------------------------------------------------
+
+/// Arm the vehicle, retrying until ArduPilot accepts. After a force-arm/disarm
+/// cycle or fresh SITL start, pre-arm checks may take several seconds to pass.
+fn arm_with_retries(
+    manager: &LinkManager,
+    session_id: &str,
+    force: bool,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    let mut last_err = String::from("arm timed out");
+    while Instant::now() < deadline {
+        match manager.arm_vehicle(session_id, force) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = err;
+                thread::sleep(Duration::from_secs(1));
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn wait_for_vehicle_state(
+    event_rx: &mpsc::Receiver<CoreEvent>,
+    session_id: &str,
+    timeout: Duration,
+) -> Result<VehicleStateEvent, String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = event_rx
+            .recv_timeout(remaining)
+            .map_err(|_| String::from("timed out waiting for VehicleState event"))?;
+        if let CoreEvent::VehicleState(vs) = event {
+            if vs.session_id == session_id {
+                return Ok(vs);
+            }
+        }
+    }
+    Err(String::from("timed out waiting for VehicleState event"))
+}
+
+fn wait_for_armed_state(
+    event_rx: &mpsc::Receiver<CoreEvent>,
+    session_id: &str,
+    expected_armed: bool,
+    timeout: Duration,
+) -> Result<VehicleStateEvent, String> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let event = event_rx
+            .recv_timeout(remaining)
+            .map_err(|_| {
+                format!(
+                    "timed out waiting for armed={expected_armed} VehicleState"
+                )
+            })?;
+        if let CoreEvent::VehicleState(vs) = event {
+            if vs.session_id == session_id && vs.armed == expected_armed {
+                return Ok(vs);
+            }
+        }
+    }
+    Err(format!(
+        "timed out waiting for armed={expected_armed} VehicleState"
+    ))
+}
+
+/// Connect to SITL, wait for connected + telemetry + heartbeat, return (manager, session_id, event_rx).
+/// The caller is responsible for calling `manager.disconnect_all()` when done.
+fn setup_sitl_session() -> (LinkManager, String, mpsc::Receiver<CoreEvent>) {
+    let bind_addr =
+        std::env::var("MP_SITL_UDP_BIND").unwrap_or_else(|_| String::from("0.0.0.0:14550"));
+    let (event_tx, event_rx) = mpsc::channel();
+    let mut manager = LinkManager::new();
+
+    let (session, _cancel_flag) = manager.connect(
+        ConnectRequest {
+            endpoint: LinkEndpoint::Udp { bind_addr },
+        },
+        event_tx,
+    );
+
+    wait_for_connected(&event_rx, &session.session_id);
+    wait_for_telemetry(&event_rx, &session.session_id)
+        .expect("should receive telemetry from SITL");
+    // Wait for a heartbeat so the session thread knows autopilot + vehicle type.
+    // Without this, vehicle_target may have MAV_AUTOPILOT_GENERIC and mode
+    // lookups (resolve_guided_mode, get_available_modes) will fail.
+    wait_for_vehicle_state(&event_rx, &session.session_id, Duration::from_secs(10))
+        .expect("should receive heartbeat from SITL");
+
+    (manager, session.session_id, event_rx)
+}
+
+// ---------------------------------------------------------------------------
+// SITL integration tests: arm, mode, takeoff
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "requires ArduPilot SITL endpoint"]
+fn sitl_force_arm_disarm_cycle() {
+    let (mut manager, session_id, event_rx) = setup_sitl_session();
+
+    let result: Result<(), String> = (|| {
+        // Force arm
+        manager.arm_vehicle(&session_id, true)?;
+        let vs = wait_for_armed_state(&event_rx, &session_id, true, Duration::from_secs(10))?;
+        if !vs.armed {
+            return Err(String::from("vehicle should be armed after force arm"));
+        }
+
+        // Force disarm
+        manager.disarm_vehicle(&session_id, true)?;
+        let vs = wait_for_armed_state(&event_rx, &session_id, false, Duration::from_secs(10))?;
+        if vs.armed {
+            return Err(String::from("vehicle should be disarmed after force disarm"));
+        }
+
+        Ok(())
+    })();
+
+    manager.disconnect_all();
+    if let Err(err) = result {
+        panic!("{err}");
+    }
+}
+
+#[test]
+#[ignore = "requires ArduPilot SITL endpoint"]
+fn sitl_set_flight_mode() {
+    let (mut manager, session_id, event_rx) = setup_sitl_session();
+
+    let result: Result<(), String> = (|| {
+        // Set GUIDED (custom_mode=4 for ArduCopter)
+        manager.set_flight_mode(&session_id, 4)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let vs = wait_for_vehicle_state(
+                &event_rx,
+                &session_id,
+                deadline.saturating_duration_since(Instant::now()),
+            )?;
+            if vs.flight_mode == 4 {
+                if vs.flight_mode_name != "GUIDED" {
+                    return Err(format!(
+                        "expected mode name GUIDED, got {}",
+                        vs.flight_mode_name
+                    ));
+                }
+                break;
+            }
+        }
+
+        // Set LOITER (custom_mode=5)
+        manager.set_flight_mode(&session_id, 5)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let vs = wait_for_vehicle_state(
+                &event_rx,
+                &session_id,
+                deadline.saturating_duration_since(Instant::now()),
+            )?;
+            if vs.flight_mode == 5 {
+                if vs.flight_mode_name != "LOITER" {
+                    return Err(format!(
+                        "expected mode name LOITER, got {}",
+                        vs.flight_mode_name
+                    ));
+                }
+                break;
+            }
+        }
+
+        Ok(())
+    })();
+
+    manager.disconnect_all();
+    if let Err(err) = result {
+        panic!("{err}");
+    }
+}
+
+#[test]
+#[ignore = "requires ArduPilot SITL endpoint"]
+fn sitl_takeoff_and_land() {
+    let (mut manager, session_id, event_rx) = setup_sitl_session();
+
+    let result: Result<(), String> = (|| {
+        // Set GUIDED while disarmed (less strict), then arm with retries
+        // (pre-arm checks may need time after prior force-arm/disarm cycle).
+        // takeoff() re-does mode+arm as no-ops and sends NAV_TAKEOFF.
+        manager.set_flight_mode(&session_id, 4)?; // GUIDED
+        arm_with_retries(&manager, &session_id, false, Duration::from_secs(30))?;
+        manager.takeoff(&session_id, 10.0)?;
+
+        // Verify armed
+        let vs = wait_for_armed_state(&event_rx, &session_id, true, Duration::from_secs(15))?;
+        if !vs.armed {
+            return Err(String::from("vehicle should be armed after takeoff"));
+        }
+
+        // Let vehicle climb
+        thread::sleep(Duration::from_secs(5));
+
+        // Land
+        manager.set_flight_mode(&session_id, 9)?; // LAND=9
+
+        // Wait for auto-disarm on landing (up to 60s)
+        let vs =
+            wait_for_armed_state(&event_rx, &session_id, false, Duration::from_secs(60))?;
+        if vs.armed {
+            return Err(String::from("vehicle should auto-disarm after landing"));
+        }
+
+        Ok(())
+    })();
+
+    // Cleanup: force disarm in case test failed mid-flight
+    let _ = manager.disarm_vehicle(&session_id, true);
+    manager.disconnect_all();
+    if let Err(err) = result {
+        panic!("{err}");
+    }
+}
+
+#[test]
+#[ignore = "requires ArduPilot SITL endpoint"]
+fn sitl_guided_goto() {
+    let (mut manager, session_id, event_rx) = setup_sitl_session();
+
+    let result: Result<(), String> = (|| {
+        // Set GUIDED while disarmed, arm with retries, then takeoff
+        manager.set_flight_mode(&session_id, 4)?; // GUIDED
+        arm_with_retries(&manager, &session_id, false, Duration::from_secs(30))?;
+        manager.takeoff(&session_id, 25.0)?;
+        wait_for_armed_state(&event_rx, &session_id, true, Duration::from_secs(15))?;
+
+        // Let vehicle climb
+        thread::sleep(Duration::from_secs(5));
+
+        // Send guided goto (SITL home is near 42.3898, -71.1476 per Makefile)
+        let lat_e7 = (42.390_000 * 1e7) as i32;
+        let lon_e7 = (-71.147_000 * 1e7) as i32;
+        manager.guided_goto(&session_id, lat_e7, lon_e7, 25.0)?;
+
+        // Let vehicle start moving
+        thread::sleep(Duration::from_secs(3));
+
+        // Cleanup: force disarm
+        manager.disarm_vehicle(&session_id, true)?;
+
+        Ok(())
+    })();
+
+    let _ = manager.disarm_vehicle(&session_id, true);
+    manager.disconnect_all();
+    if let Err(err) = result {
+        panic!("{err}");
+    }
+}
+
+#[test]
+#[ignore = "requires ArduPilot SITL endpoint"]
+fn sitl_get_available_modes() {
+    let (mut manager, session_id, _event_rx) = setup_sitl_session();
+
+    let result: Result<(), String> = (|| {
+        let modes = manager.get_available_modes(&session_id)?;
+
+        // ArduCopter has many modes; verify we got a reasonable set
+        if modes.len() < 10 {
+            return Err(format!(
+                "expected at least 10 copter modes, got {}",
+                modes.len()
+            ));
+        }
+
+        // Verify expected modes are present
+        let has_mode = |name: &str, id: u32| -> bool {
+            modes
+                .iter()
+                .any(|(m_id, m_name)| *m_id == id && m_name == name)
+        };
+
+        if !has_mode("STABILIZE", 0) {
+            return Err(String::from("missing STABILIZE mode"));
+        }
+        if !has_mode("GUIDED", 4) {
+            return Err(String::from("missing GUIDED mode"));
+        }
+        if !has_mode("LOITER", 5) {
+            return Err(String::from("missing LOITER mode"));
+        }
+        if !has_mode("RTL", 6) {
+            return Err(String::from("missing RTL mode"));
+        }
+
+        Ok(())
+    })();
+
+    manager.disconnect_all();
+    if let Err(err) = result {
+        panic!("{err}");
     }
 }
