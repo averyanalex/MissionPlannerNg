@@ -98,6 +98,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
             size={{ width: Math.min(horizonSize.width, 600), height: 52 }}
             circular
             circularRange={360}
+            bugValue={telemetry.target_bearing_deg}
           />
         </div>
 
@@ -135,6 +136,8 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
             pitch={telemetry.pitch_deg}
             roll={telemetry.roll_deg}
             size={horizonSize}
+            climbRate={telemetry.climb_rate_mps}
+            groundSpeed={telemetry.speed_mps}
           />
         </div>
 
@@ -150,6 +153,7 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
             unit="m"
             label="ALT"
             trendValue={telemetry.climb_rate_mps}
+            terrainValue={telemetry.terrain_height_m}
           />
         </div>
 
@@ -187,6 +191,14 @@ export function HudPanel({ vehicle, mission }: HudPanelProps) {
               <span className="text-[9px] opacity-50">HDG </span>
               <span className="text-xs">{fmtInt(telemetry.heading_deg)}°</span>
             </div>
+            {telemetry.height_above_terrain_m !== undefined && (
+              <div>
+                <span className="text-[9px] opacity-50">AGL </span>
+                <span className="text-xs" style={{ color: "#57e38b" }}>
+                  {fmtInt(telemetry.height_above_terrain_m)} m
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

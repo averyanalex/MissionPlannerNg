@@ -15,6 +15,8 @@ type TapeGaugeProps = {
   circularRange?: number;
   /** If true, tape grows upward (speed/altitude). If false, tape grows downward. Default true for vertical. */
   growsUp?: boolean;
+  /** Terrain MSL altitude — draws a green band from terrain level downward on vertical tapes */
+  terrainValue?: number;
 };
 
 const ACCENT = "#12b9ff";
@@ -38,6 +40,7 @@ export function TapeGauge({
   circular = false,
   circularRange = 360,
   growsUp = true,
+  terrainValue,
 }: TapeGaugeProps) {
   const isVertical = orientation === "vertical";
   const { width, height } = size;
@@ -98,14 +101,25 @@ export function TapeGauge({
   const pxPerUnit = span / visibleRange;
   const fracPx = (growsUp && isVertical ? 1 : -1) * frac * pxPerUnit;
 
-  // Bug position (e.g., airspeed bug)
+  // Bug position (e.g., airspeed bug, nav bearing)
   const bugPos = useMemo(() => {
     if (bugValue === undefined || !hasValue) return null;
-    const offset = bugValue - displayValue;
+    let offset = bugValue - displayValue;
+    if (circular) {
+      // Wrap to shortest angular path
+      offset = ((offset % circularRange) + circularRange + circularRange / 2) % circularRange - circularRange / 2;
+    }
     const pos = span / 2 + (growsUp && isVertical ? -1 : 1) * offset * pxPerUnit;
     if (pos < 0 || pos > span) return null;
     return pos;
-  }, [bugValue, displayValue, span, pxPerUnit, isVertical, growsUp, hasValue]);
+  }, [bugValue, displayValue, span, pxPerUnit, isVertical, growsUp, hasValue, circular, circularRange]);
+
+  // Terrain band position (vertical tapes only)
+  const terrainPos = useMemo(() => {
+    if (terrainValue === undefined || !hasValue || !isVertical) return null;
+    const offset = terrainValue - displayValue;
+    return span / 2 + (growsUp ? -1 : 1) * offset * pxPerUnit;
+  }, [terrainValue, displayValue, span, pxPerUnit, isVertical, growsUp, hasValue]);
 
   // Trend arrow (e.g., climb rate)
   const trendLen = useMemo(() => {
@@ -210,10 +224,42 @@ export function TapeGauge({
           })}
         </g>
 
-        {/* Bug indicator */}
+        {/* Terrain band — green shaded region below terrain level */}
+        {terrainPos !== null && (
+          <>
+            <rect
+              x={0}
+              y={terrainPos}
+              width={width}
+              height={Math.max(0, span - terrainPos + span)}
+              fill="rgba(34, 139, 34, 0.12)"
+            />
+            <line
+              x1={0}
+              y1={terrainPos}
+              x2={width}
+              y2={terrainPos}
+              stroke="#57e38b"
+              strokeWidth={1.5}
+              opacity={0.6}
+              strokeDasharray="4 3"
+            />
+          </>
+        )}
+
+        {/* Bug indicator — vertical tape */}
         {bugPos !== null && isVertical && (
           <polygon
             points={`${width},${bugPos - 4} ${width - 6},${bugPos} ${width},${bugPos + 4}`}
+            fill="#57e38b"
+            opacity={0.8}
+          />
+        )}
+
+        {/* Bug indicator — horizontal tape (e.g., nav bearing on heading) */}
+        {bugPos !== null && !isVertical && (
+          <polygon
+            points={`${bugPos},0 ${bugPos - 4},6 ${bugPos + 4},6`}
             fill="#57e38b"
             opacity={0.8}
           />

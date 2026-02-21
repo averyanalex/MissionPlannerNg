@@ -4,11 +4,14 @@ type ArtificialHorizonProps = {
   pitch: number | undefined;
   roll: number | undefined;
   size: { width: number; height: number };
+  climbRate?: number;
+  groundSpeed?: number;
 };
 
 const ACCENT = "#12b9ff";
 const PX_PER_DEG = 4;
 const PITCH_CLAMP = 40;
+const FPV_COLOR = "#57e38b";
 
 const ROLL_TICKS = [
   { deg: -60, len: 12 },
@@ -24,7 +27,7 @@ const ROLL_TICKS = [
   { deg: 60, len: 12 },
 ];
 
-export function ArtificialHorizon({ pitch, roll, size }: ArtificialHorizonProps) {
+export function ArtificialHorizon({ pitch, roll, size, climbRate, groundSpeed }: ArtificialHorizonProps) {
   const { width, height } = size;
   const cx = width / 2;
   const cy = height / 2;
@@ -33,6 +36,16 @@ export function ArtificialHorizon({ pitch, roll, size }: ArtificialHorizonProps)
 
   const pitchVal = hasPitch ? Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, pitch)) : 0;
   const rollVal = hasRoll ? roll : 0;
+
+  // Flight path vector angle (degrees)
+  const fpvAngle = useMemo(() => {
+    if (climbRate === undefined || groundSpeed === undefined || groundSpeed < 1) return null;
+    const gamma = Math.atan2(climbRate, groundSpeed) * (180 / Math.PI);
+    return Math.max(-PITCH_CLAMP, Math.min(PITCH_CLAMP, gamma));
+  }, [climbRate, groundSpeed]);
+
+  // Background extent for sky/ground fills (handles rotation without gaps)
+  const bgExtent = Math.max(width, height) * 2;
 
   // Static pitch ladder lines — only the transform changes per frame
   const pitchLines = useMemo(() => {
@@ -75,6 +88,24 @@ export function ArtificialHorizon({ pitch, roll, size }: ArtificialHorizonProps)
       {/* Pitch ladder + horizon, rotated and translated */}
       <g clipPath="url(#horizon-clip)">
         <g transform={`translate(${cx}, ${cy}) rotate(${-rollVal})`}>
+          {/* Sky fill — subtle blue above horizon */}
+          <rect
+            x={-bgExtent}
+            y={pitchVal * PX_PER_DEG - bgExtent * 2}
+            width={bgExtent * 2}
+            height={bgExtent * 2}
+            fill="rgba(20, 60, 140, 0.06)"
+          />
+
+          {/* Ground fill — semi-transparent green below horizon */}
+          <rect
+            x={-bgExtent}
+            y={pitchVal * PX_PER_DEG}
+            width={bgExtent * 2}
+            height={bgExtent * 2}
+            fill="rgba(34, 139, 34, 0.10)"
+          />
+
           {/* Horizon line — extends well beyond viewport for rotation */}
           <line
             x1={-width}
@@ -129,6 +160,19 @@ export function ArtificialHorizon({ pitch, roll, size }: ArtificialHorizonProps)
               </g>
             ))}
           </g>
+
+          {/* Flight path vector — shows actual velocity direction */}
+          {fpvAngle !== null && (() => {
+            const fpvY = (pitchVal - fpvAngle) * PX_PER_DEG;
+            return (
+              <g transform={`translate(0, ${fpvY})`} opacity={0.85}>
+                <circle cx={0} cy={0} r={5} fill="none" stroke={FPV_COLOR} strokeWidth={1.5} />
+                <line x1={-18} y1={0} x2={-7} y2={0} stroke={FPV_COLOR} strokeWidth={1.5} />
+                <line x1={7} y1={0} x2={18} y2={0} stroke={FPV_COLOR} strokeWidth={1.5} />
+                <line x1={0} y1={5} x2={0} y2={12} stroke={FPV_COLOR} strokeWidth={1.5} />
+              </g>
+            );
+          })()}
         </g>
       </g>
 
