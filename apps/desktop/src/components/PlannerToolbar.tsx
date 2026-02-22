@@ -48,7 +48,7 @@ export function PlannerToolbar({ mission, connected }: PlannerToolbarProps) {
   return (
     <div className="space-y-2">
       {/* Primary actions */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Button size="sm" disabled={transferActive || !connected} onClick={upload}>
           <Upload className="h-3.5 w-3.5" /> Write
         </Button>
@@ -95,7 +95,7 @@ export function PlannerToolbar({ mission, connected }: PlannerToolbarProps) {
       </div>
 
       {/* Mission type + transfer progress */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <select
           value={missionType}
           onChange={(e) => setMissionType(e.target.value as MissionType)}

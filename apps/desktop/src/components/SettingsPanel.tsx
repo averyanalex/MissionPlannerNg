@@ -26,7 +26,7 @@ export function SettingsPanel({ settings, updateSettings }: SettingsPanelProps) 
   }
 
   return (
-    <div className="flex h-full flex-col gap-6 overflow-y-auto">
+    <div className="flex h-full max-w-2xl flex-col gap-6 overflow-y-auto">
       <h2 className="text-lg font-semibold">Settings</h2>
 
       {/* Telemetry Rate */}

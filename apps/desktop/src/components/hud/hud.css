@@ -103,12 +103,26 @@
 /* HUD layout grid */
 .hud-grid {
   display: grid;
-  grid-template-columns: 100px 1fr 100px;
-  grid-template-rows: 56px 1fr 48px;
+  grid-template-columns: 60px 1fr 60px;
+  grid-template-rows: 40px 1fr 36px;
   width: 100%;
   height: 100%;
   position: relative;
   z-index: 5;
+}
+
+@media (min-width: 640px) {
+  .hud-grid {
+    grid-template-columns: 80px 1fr 80px;
+    grid-template-rows: 48px 1fr 42px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .hud-grid {
+    grid-template-columns: 100px 1fr 100px;
+    grid-template-rows: 56px 1fr 48px;
+  }
 }
 
 /* Readout box — filled center value display */
@@ -152,15 +166,33 @@
 /* Mini-map container */
 .hud-minimap {
   position: absolute;
-  bottom: 52px;
-  left: 104px;
-  width: 192px;
-  height: 192px;
+  bottom: 40px;
+  left: 64px;
+  width: 120px;
+  height: 120px;
   border: 1px solid rgba(18, 185, 255, 0.3);
   border-radius: 4px;
   overflow: hidden;
   z-index: 10;
   opacity: 0.85;
+}
+
+@media (min-width: 640px) {
+  .hud-minimap {
+    bottom: 46px;
+    left: 84px;
+    width: 160px;
+    height: 160px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .hud-minimap {
+    bottom: 52px;
+    left: 104px;
+    width: 192px;
+    height: 192px;
+  }
 }
 
 .hud-minimap .maplibregl-ctrl-group,

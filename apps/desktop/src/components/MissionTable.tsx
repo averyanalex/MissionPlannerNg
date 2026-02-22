@@ -22,7 +22,7 @@ export function MissionTable({ mission }: MissionTableProps) {
 
   return (
     <div className="overflow-auto rounded-lg border border-border">
-      <table className="w-full border-collapse text-sm">
+      <table className="min-w-[600px] w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border bg-bg-tertiary/50">
             <th className="px-2 py-1.5 text-left text-xs font-semibold text-text-muted">#</th>

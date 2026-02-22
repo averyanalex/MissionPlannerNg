@@ -1,6 +1,6 @@
 import {
   Plane, Radio, Battery, Gauge, Compass, Navigation, Satellite,
-  ArrowUp, RotateCcw, CircleDot, RefreshCw, Plug, Unplug,
+  ArrowUp, RotateCcw, CircleDot, RefreshCw, Plug, Unplug, X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { ArmSlider } from "./ArmSlider";
@@ -9,6 +9,9 @@ import type { useVehicle } from "../hooks/use-vehicle";
 
 type SidebarProps = {
   vehicle: ReturnType<typeof useVehicle>;
+  isMobile: boolean;
+  open: boolean;
+  onClose: () => void;
 };
 
 function formatMaybe(value?: number) {
@@ -22,7 +25,47 @@ function formatLinkState(state: ReturnType<typeof useVehicle>["linkState"]): str
   return `Error`;
 }
 
-export function Sidebar({ vehicle }: SidebarProps) {
+export function Sidebar({ vehicle, isMobile, open, onClose }: SidebarProps) {
+  // Mobile: drawer overlay
+  if (isMobile) {
+    return (
+      <>
+        {/* Backdrop */}
+        <div
+          className={cn(
+            "fixed inset-0 z-40 bg-black/50 transition-opacity duration-200",
+            open ? "opacity-100" : "pointer-events-none opacity-0"
+          )}
+          onClick={onClose}
+        />
+        {/* Drawer panel */}
+        <aside
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex w-72 flex-col gap-3 overflow-y-auto bg-bg-secondary p-3 shadow-xl transition-transform duration-200",
+            open ? "translate-x-0" : "-translate-x-full"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-bold text-text-primary">Vehicle</span>
+            <button onClick={onClose} className="rounded p-1 text-text-muted hover:text-text-primary">
+              <X size={16} />
+            </button>
+          </div>
+          <SidebarContent vehicle={vehicle} />
+        </aside>
+      </>
+    );
+  }
+
+  // Desktop: static sidebar
+  return (
+    <aside className="flex w-64 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border bg-bg-secondary p-3 xl:w-72">
+      <SidebarContent vehicle={vehicle} />
+    </aside>
+  );
+}
+
+function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> }) {
   const {
     telemetry, linkState, vehicleState, connected, connectionError,
     connectionMode, setConnectionMode, udpBind, setUdpBind,
@@ -33,7 +76,7 @@ export function Sidebar({ vehicle }: SidebarProps) {
   } = vehicle;
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border bg-bg-secondary p-3">
+    <>
       {/* Connection */}
       <section className="rounded-lg border border-border bg-bg-primary p-3">
         <h3 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-text-muted">
@@ -205,7 +248,7 @@ export function Sidebar({ vehicle }: SidebarProps) {
         onArm={(force) => arm(force)}
         onDisarm={(force) => disarm(force)}
       />
-    </aside>
+    </>
   );
 }
 

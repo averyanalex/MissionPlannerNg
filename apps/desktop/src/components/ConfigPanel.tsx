@@ -97,7 +97,7 @@ function BitmaskEditor({
           <X size={12} />
         </button>
       </div>
-      <div className="ml-56 flex flex-col gap-0.5">
+      <div className="ml-0 flex flex-col gap-0.5 sm:ml-56">
         {meta.bitmask!.map((b) => (
           <label key={b.bit} className="flex items-center gap-1.5 text-[11px] text-text-secondary cursor-pointer">
             <input
@@ -185,7 +185,7 @@ function ParamRow({
   return (
     <div className="flex flex-col gap-0.5 py-1 px-2 text-xs hover:bg-bg-tertiary/50 rounded">
       <div className="flex items-center gap-2">
-        <span className="w-56 shrink-0 truncate font-mono text-text-primary" title={param.name}>
+        <span className="w-40 shrink-0 truncate font-mono text-text-primary sm:w-56" title={param.name}>
           {param.name}
         </span>
         {isEditing ? (
@@ -313,7 +313,7 @@ export function ConfigPanel({ params, connected }: ConfigPanelProps) {
   return (
     <div className="flex h-full flex-col gap-3 overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={params.download}
           disabled={!connected || downloading}
@@ -350,7 +350,7 @@ export function ConfigPanel({ params, connected }: ConfigPanelProps) {
             placeholder="Search parameters…"
             value={params.search}
             onChange={(e) => params.setSearch(e.target.value)}
-            className="w-48 rounded border border-border bg-bg-input px-2 py-1 text-xs text-text-primary placeholder:text-text-muted"
+            className="w-full rounded border border-border bg-bg-input px-2 py-1 text-xs text-text-primary placeholder:text-text-muted sm:w-48"
           />
         </div>
       </div>

@@ -56,7 +56,7 @@ export function MissionPanel({ vehicle, mission }: MissionPanelProps) {
 
       {/* Home position info */}
       {mission.missionType === "mission" && (
-        <div className="flex items-center gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2 text-xs lg:gap-3">
           <span className="text-text-muted">Home:</span>
           {mission.homePosition ? (
             <span className="text-text-secondary">
@@ -96,8 +96,8 @@ export function MissionPanel({ vehicle, mission }: MissionPanelProps) {
       )}
 
       {/* Map + Table split */}
-      <div className="grid flex-1 grid-cols-[minmax(300px,44%)_1fr] gap-3 overflow-hidden">
-        <div ref={mapContainerRef} className="relative overflow-hidden rounded-lg border border-border">
+      <div className="grid flex-1 grid-cols-1 gap-3 overflow-hidden lg:grid-cols-[minmax(300px,44%)_1fr]">
+        <div ref={mapContainerRef} className="relative h-64 overflow-hidden rounded-lg border border-border sm:h-80 lg:h-auto">
           <MissionMap
             missionItems={mission.items}
             homePosition={mission.missionType === "mission" ? mission.homePosition : null}

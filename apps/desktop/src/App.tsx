@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { toast, Toaster } from "sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { TopBar } from "./components/TopBar";
+import { BottomNav } from "./components/BottomNav";
 import { Sidebar } from "./components/Sidebar";
 import { MapPanel } from "./components/MapPanel";
 import { TelemetryPanel } from "./components/TelemetryPanel";
@@ -13,7 +14,9 @@ import { useVehicle } from "./hooks/use-vehicle";
 import { useMission } from "./hooks/use-mission";
 import { useSettings } from "./hooks/use-settings";
 import { useParams } from "./hooks/use-params";
+import { useBreakpoint } from "./hooks/use-breakpoint";
 import { setTelemetryRate } from "./telemetry";
+import { cn } from "./lib/utils";
 import "./app.css";
 
 type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "config" | "settings";
@@ -54,12 +57,21 @@ function checkGpuRenderer() {
   if (loseExt) loseExt.loseContext();
 }
 
+function linkDotColor(state: ReturnType<typeof useVehicle>["linkState"]): string {
+  if (state === "connected") return "bg-success";
+  if (state === "connecting") return "bg-warning";
+  if (state === null || state === "disconnected") return "bg-text-muted";
+  return "bg-danger";
+}
+
 export default function App() {
   const vehicle = useVehicle();
   const mission = useMission(vehicle.connected, vehicle.telemetry, vehicle.homePosition);
   const params = useParams(vehicle.connected, vehicle.vehicleState?.vehicle_type);
   const { settings, updateSettings } = useSettings();
   const [activeTab, setActiveTab] = useState<ActiveTab>("map");
+  const { isMobile } = useBreakpoint();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => { checkGpuRenderer() }, []);
 
@@ -71,10 +83,26 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen flex-col bg-bg-primary text-text-primary">
-        <TopBar activeTab={activeTab} onTabChange={setActiveTab} linkState={vehicle.linkState} />
+        {/* Desktop: full top bar with tabs | Mobile: compact header */}
+        {isMobile ? (
+          <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-3">
+            <span className="text-sm font-bold tracking-tight text-text-primary">MPNG</span>
+            <div className={cn("h-2 w-2 rounded-full", linkDotColor(vehicle.linkState))} />
+          </header>
+        ) : (
+          <TopBar activeTab={activeTab} onTabChange={setActiveTab} linkState={vehicle.linkState} />
+        )}
+
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar vehicle={vehicle} />
-          <main className="flex-1 overflow-hidden p-3">
+          {/* Desktop: static sidebar | Mobile: drawer overlay */}
+          <Sidebar
+            vehicle={vehicle}
+            isMobile={isMobile}
+            open={sidebarOpen}
+            onClose={() => setSidebarOpen(false)}
+          />
+
+          <main className="flex-1 overflow-hidden p-2 lg:p-3">
             {activeTab === "map" ? (
               <MapPanel vehicle={vehicle} mission={mission} />
             ) : activeTab === "telemetry" ? (
@@ -90,7 +118,18 @@ export default function App() {
             )}
           </main>
         </div>
-        <Toaster richColors position="bottom-right" theme="dark" />
+
+        {/* Mobile: bottom nav | Desktop: nothing */}
+        {isMobile && (
+          <BottomNav
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            linkState={vehicle.linkState}
+            onSidebarOpen={() => setSidebarOpen(true)}
+          />
+        )}
+
+        <Toaster richColors position={isMobile ? "top-center" : "bottom-right"} theme="dark" />
       </div>
     </TooltipProvider>
   );
