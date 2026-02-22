@@ -5,6 +5,7 @@ pub mod event_loop;
 pub mod mission;
 #[cfg(feature = "ardupilot")]
 pub mod modes;
+pub mod params;
 pub mod state;
 pub mod vehicle;
 
@@ -22,4 +23,9 @@ pub use mission::{
     validate_plan, CompareTolerance, HomePosition, IssueSeverity, MissionFrame, MissionHandle,
     MissionItem, MissionIssue, MissionPlan, MissionTransferMachine, MissionType, RetryPolicy,
     TransferDirection, TransferError, TransferEvent, TransferPhase, TransferProgress,
+};
+
+pub use params::{
+    format_param_file, parse_param_file, Param, ParamProgress, ParamStore, ParamTransferPhase,
+    ParamType, ParamsHandle,
 };

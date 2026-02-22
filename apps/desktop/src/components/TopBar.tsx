@@ -1,8 +1,8 @@
-import { Map, Activity, Crosshair, Route, Settings } from "lucide-react";
+import { Map, Activity, Crosshair, Route, Sliders, Settings } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { LinkState } from "../telemetry";
 
-type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "settings";
+type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "config" | "settings";
 
 type TopBarProps = {
   activeTab: ActiveTab;
@@ -15,6 +15,7 @@ const TABS: { id: ActiveTab; label: string; Icon: typeof Map }[] = [
   { id: "telemetry", label: "Telemetry", Icon: Activity },
   { id: "hud", label: "HUD", Icon: Crosshair },
   { id: "mission", label: "Mission", Icon: Route },
+  { id: "config", label: "Config", Icon: Sliders },
   { id: "settings", label: "Settings", Icon: Settings },
 ];
 

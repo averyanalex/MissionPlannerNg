@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use mavkit::{
-    validate_plan, FlightMode, HomePosition, LinkState, MissionIssue, MissionPlan, MissionType,
-    Telemetry, TransferProgress, Vehicle, VehicleState,
+    format_param_file, parse_param_file, validate_plan, FlightMode, HomePosition, LinkState,
+    MissionIssue, MissionPlan, MissionType, Param, ParamProgress, ParamStore, Telemetry,
+    TransferProgress, Vehicle, VehicleState,
 };
+use std::collections::HashMap;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -227,6 +229,38 @@ async fn mission_cancel(state: tauri::State<'_, AppState>) -> Result<(), String>
 }
 
 // ---------------------------------------------------------------------------
+// Parameter commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn param_download_all(state: tauri::State<'_, AppState>) -> Result<ParamStore, String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.params().download_all().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn param_write(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    value: f32,
+) -> Result<Param, String> {
+    let guard = state.vehicle.lock().await;
+    let vehicle = guard.as_ref().ok_or("not connected")?;
+    vehicle.params().write(name, value).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn param_parse_file(contents: String) -> Result<HashMap<String, f32>, String> {
+    parse_param_file(&contents)
+}
+
+#[tauri::command]
+fn param_format_file(store: ParamStore) -> String {
+    format_param_file(&store)
+}
+
+// ---------------------------------------------------------------------------
 // Watch → Tauri event bridges
 // ---------------------------------------------------------------------------
 
@@ -314,6 +348,30 @@ fn spawn_event_bridges(app: &tauri::AppHandle, vehicle: &Vehicle) {
             }
         });
     }
+
+    // ParamStore
+    {
+        let mut rx = vehicle.param_store();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let ps: ParamStore = rx.borrow().clone();
+                let _ = handle.emit("param://store", &ps);
+            }
+        });
+    }
+
+    // ParamProgress
+    {
+        let mut rx = vehicle.param_progress();
+        let handle = app.clone();
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let pp: ParamProgress = rx.borrow().clone();
+                let _ = handle.emit("param://progress", &pp);
+            }
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +385,9 @@ fn main() {
 
     tauri::Builder::default()
         .manage(state)
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             connect_link,
             disconnect_link,
@@ -344,7 +405,11 @@ fn main() {
             vehicle_takeoff,
             vehicle_guided_goto,
             get_available_modes,
-            set_telemetry_rate
+            set_telemetry_rate,
+            param_download_all,
+            param_write,
+            param_parse_file,
+            param_format_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri app");

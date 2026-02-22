@@ -1,5 +1,6 @@
 use crate::error::VehicleError;
 use crate::mission::{MissionPlan, MissionType};
+use crate::params::{Param, ParamStore};
 use mavlink::common::MavCmd;
 use tokio::sync::oneshot;
 
@@ -44,5 +45,13 @@ pub(crate) enum Command {
         reply: oneshot::Sender<Result<(), VehicleError>>,
     },
     MissionCancelTransfer,
+    ParamDownloadAll {
+        reply: oneshot::Sender<Result<ParamStore, VehicleError>>,
+    },
+    ParamWrite {
+        name: String,
+        value: f32,
+        reply: oneshot::Sender<Result<Param, VehicleError>>,
+    },
     Shutdown,
 }

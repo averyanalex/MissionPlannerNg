@@ -3,6 +3,7 @@ use crate::config::VehicleConfig;
 use crate::error::VehicleError;
 use crate::event_loop::run_event_loop;
 use crate::mission::{HomePosition, MissionHandle, TransferProgress};
+use crate::params::{ParamProgress, ParamStore, ParamsHandle};
 use crate::state::{
     create_channels, FlightMode, LinkState, MissionState, StateChannels, Telemetry,
     VehicleIdentity, VehicleState,
@@ -147,6 +148,14 @@ impl Vehicle {
         self.inner.channels.mission_progress.clone()
     }
 
+    pub fn param_store(&self) -> watch::Receiver<ParamStore> {
+        self.inner.channels.param_store.clone()
+    }
+
+    pub fn param_progress(&self) -> watch::Receiver<ParamProgress> {
+        self.inner.channels.param_progress.clone()
+    }
+
     // --- Vehicle commands ---
 
     pub async fn arm(&self, force: bool) -> Result<(), VehicleError> {
@@ -225,6 +234,11 @@ impl Vehicle {
     /// Mission sub-API.
     pub fn mission(&self) -> MissionHandle<'_> {
         MissionHandle::new(self)
+    }
+
+    /// Parameter sub-API.
+    pub fn params(&self) -> ParamsHandle<'_> {
+        ParamsHandle::new(self)
     }
 
     /// Gracefully disconnect from the vehicle.

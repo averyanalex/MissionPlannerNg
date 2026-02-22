@@ -229,6 +229,8 @@ pub(crate) struct StateWriters {
     pub mission_state: tokio::sync::watch::Sender<MissionState>,
     pub link_state: tokio::sync::watch::Sender<LinkState>,
     pub mission_progress: tokio::sync::watch::Sender<Option<crate::mission::TransferProgress>>,
+    pub param_store: tokio::sync::watch::Sender<crate::params::ParamStore>,
+    pub param_progress: tokio::sync::watch::Sender<crate::params::ParamProgress>,
 }
 
 /// Reader-side channels, cloneable via Arc.
@@ -239,6 +241,8 @@ pub(crate) struct StateChannels {
     pub mission_state: tokio::sync::watch::Receiver<MissionState>,
     pub link_state: tokio::sync::watch::Receiver<LinkState>,
     pub mission_progress: tokio::sync::watch::Receiver<Option<crate::mission::TransferProgress>>,
+    pub param_store: tokio::sync::watch::Receiver<crate::params::ParamStore>,
+    pub param_progress: tokio::sync::watch::Receiver<crate::params::ParamProgress>,
 }
 
 pub(crate) fn create_channels() -> (StateWriters, StateChannels) {
@@ -248,6 +252,8 @@ pub(crate) fn create_channels() -> (StateWriters, StateChannels) {
     let (ms_tx, ms_rx) = tokio::sync::watch::channel(MissionState::default());
     let (ls_tx, ls_rx) = tokio::sync::watch::channel(LinkState::Connecting);
     let (mp_tx, mp_rx) = tokio::sync::watch::channel(None);
+    let (ps_tx, ps_rx) = tokio::sync::watch::channel(crate::params::ParamStore::default());
+    let (pp_tx, pp_rx) = tokio::sync::watch::channel(crate::params::ParamProgress::default());
 
     let writers = StateWriters {
         vehicle_state: vs_tx,
@@ -256,6 +262,8 @@ pub(crate) fn create_channels() -> (StateWriters, StateChannels) {
         mission_state: ms_tx,
         link_state: ls_tx,
         mission_progress: mp_tx,
+        param_store: ps_tx,
+        param_progress: pp_tx,
     };
 
     let channels = StateChannels {
@@ -265,6 +273,8 @@ pub(crate) fn create_channels() -> (StateWriters, StateChannels) {
         mission_state: ms_rx,
         link_state: ls_rx,
         mission_progress: mp_rx,
+        param_store: ps_rx,
+        param_progress: pp_rx,
     };
 
     (writers, channels)

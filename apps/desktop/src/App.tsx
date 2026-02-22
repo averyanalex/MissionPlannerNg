@@ -8,13 +8,15 @@ import { TelemetryPanel } from "./components/TelemetryPanel";
 import { HudPanel } from "./components/hud/HudPanel";
 import { MissionPanel } from "./components/MissionPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ConfigPanel } from "./components/ConfigPanel";
 import { useVehicle } from "./hooks/use-vehicle";
 import { useMission } from "./hooks/use-mission";
 import { useSettings } from "./hooks/use-settings";
+import { useParams } from "./hooks/use-params";
 import { setTelemetryRate } from "./telemetry";
 import "./app.css";
 
-type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "settings";
+type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "config" | "settings";
 
 function checkGpuRenderer() {
   const canvas = document.createElement("canvas");
@@ -55,6 +57,7 @@ function checkGpuRenderer() {
 export default function App() {
   const vehicle = useVehicle();
   const mission = useMission(vehicle.connected, vehicle.telemetry, vehicle.homePosition);
+  const params = useParams(vehicle.connected, vehicle.vehicleState?.vehicle_type);
   const { settings, updateSettings } = useSettings();
   const [activeTab, setActiveTab] = useState<ActiveTab>("map");
 
@@ -80,6 +83,8 @@ export default function App() {
               <HudPanel vehicle={vehicle} mission={mission} svsEnabled={settings.svsEnabled} />
             ) : activeTab === "mission" ? (
               <MissionPanel vehicle={vehicle} mission={mission} />
+            ) : activeTab === "config" ? (
+              <ConfigPanel params={params} connected={vehicle.connected} />
             ) : (
               <SettingsPanel settings={settings} updateSettings={updateSettings} />
             )}

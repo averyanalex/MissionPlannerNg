@@ -10,6 +10,9 @@ tauri-build = { version = "2", features = [] }
 mavkit = { path = "../../../crates/mavkit" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-http = "2"
 tokio = { version = "1", features = ["sync"] }
 serialport = "4"
 

@@ -3,5 +3,13 @@
   "identifier": "default",
   "description": "Default capability for main window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "fs:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://autotest.ardupilot.org/Parameters/*" }]
+    }
+  ]
 }
