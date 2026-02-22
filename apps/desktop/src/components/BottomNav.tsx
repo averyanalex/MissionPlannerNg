@@ -1,13 +1,14 @@
 import { Map, Activity, Crosshair, Route, Sliders, Settings } from "lucide-react";
 import { cn } from "../lib/utils";
-import type { LinkState } from "../telemetry";
 
 type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "config" | "settings";
 
 type BottomNavProps = {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
-  linkState: LinkState | null;
+  isConnecting: boolean;
+  connected: boolean;
+  connectionError: string | null;
   onSidebarOpen: () => void;
 };
 
@@ -20,14 +21,7 @@ const TABS: { id: ActiveTab; label: string; Icon: typeof Map }[] = [
   { id: "settings", label: "Settings", Icon: Settings },
 ];
 
-function linkDotColor(state: LinkState | null): string {
-  if (state === "connected") return "bg-success";
-  if (state === "connecting") return "bg-warning";
-  if (state === null || state === "disconnected") return "bg-text-muted";
-  return "bg-danger";
-}
-
-export function BottomNav({ activeTab, onTabChange, linkState, onSidebarOpen }: BottomNavProps) {
+export function BottomNav({ activeTab, onTabChange, isConnecting, connected, connectionError, onSidebarOpen }: BottomNavProps) {
   return (
     <nav
       className="flex shrink-0 items-center justify-around border-t border-border bg-bg-secondary"
@@ -39,7 +33,13 @@ export function BottomNav({ activeTab, onTabChange, linkState, onSidebarOpen }: 
         className="flex flex-col items-center justify-center gap-0.5 px-2 py-2"
         aria-label="Vehicle panel"
       >
-        <div className={cn("h-3 w-3 rounded-full", linkDotColor(linkState))} />
+        <div className={cn(
+          "h-3 w-3 rounded-full",
+          isConnecting ? "bg-warning animate-pulse" :
+          connected ? "bg-success" :
+          connectionError ? "bg-danger" :
+          "bg-text-muted"
+        )} />
         <span className="text-[10px] text-text-muted">Vehicle</span>
       </button>
 

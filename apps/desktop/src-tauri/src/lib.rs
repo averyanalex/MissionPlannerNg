@@ -13,6 +13,7 @@ static TELEMETRY_INTERVAL_MS: AtomicU64 = AtomicU64::new(200);
 
 struct AppState {
     vehicle: tokio::sync::Mutex<Option<Vehicle>>,
+    connect_abort: tokio::sync::Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 #[derive(Deserialize)]
@@ -38,15 +39,42 @@ async fn connect_link(
     app: tauri::AppHandle,
     request: ConnectRequest,
 ) -> Result<(), String> {
+    // Abort any in-flight connect attempt so its socket is released
+    if let Some(handle) = state.connect_abort.lock().await.take() {
+        handle.abort();
+    }
+
+    // Disconnect any existing vehicle
+    {
+        let prev = state.vehicle.lock().await.take();
+        if let Some(v) = prev {
+            let _ = v.disconnect().await;
+        }
+    }
+
     let address = match &request.endpoint {
         LinkEndpoint::Udp { bind_addr } => format!("udpin:{bind_addr}"),
         #[cfg(not(target_os = "android"))]
         LinkEndpoint::Serial { port, baud } => format!("serial:{port}:{baud}"),
     };
 
-    let vehicle = Vehicle::connect(&address)
+    // Spawn as abortable task so cancel/reconnect can kill it
+    let task = tokio::spawn(async move { Vehicle::connect(&address).await });
+    *state.connect_abort.lock().await = Some(task.abort_handle());
+
+    let vehicle = task
         .await
+        .map_err(|e| {
+            if e.is_cancelled() {
+                "connection cancelled".to_string()
+            } else {
+                e.to_string()
+            }
+        })?
         .map_err(|e| e.to_string())?;
+
+    // Clear abort handle now that connect completed
+    *state.connect_abort.lock().await = None;
 
     spawn_event_bridges(&app, &vehicle);
 
@@ -56,6 +84,11 @@ async fn connect_link(
 
 #[tauri::command]
 async fn disconnect_link(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    // Abort any in-flight connect attempt
+    if let Some(handle) = state.connect_abort.lock().await.take() {
+        handle.abort();
+    }
+
     let vehicle = state.vehicle.lock().await.take();
     if let Some(v) = vehicle {
         v.disconnect().await.map_err(|e| e.to_string())?;
@@ -383,6 +416,7 @@ fn spawn_event_bridges(app: &tauri::AppHandle, vehicle: &Vehicle) {
 pub fn run() {
     let state = AppState {
         vehicle: tokio::sync::Mutex::new(None),
+        connect_abort: tokio::sync::Mutex::new(None),
     };
 
     let mut builder = tauri::Builder::default()

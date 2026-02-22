@@ -35,6 +35,7 @@ export function useVehicle() {
   const [homePosition, setHomePosition] = useState<HomePosition | null>(null);
   const [availableModes, setAvailableModes] = useState<FlightModeEntry[]>([]);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   // Connection form state
   const [mode, setMode] = useState<"udp" | "serial">("udp");
@@ -112,8 +113,12 @@ export function useVehicle() {
     }
   }, [connected, vehicleState?.autopilot, vehicleState?.vehicle_type]);
 
+  const cancelledRef = useRef(false);
+
   const connect = useCallback(async () => {
+    cancelledRef.current = false;
     setConnectionError(null);
+    setIsConnecting(true);
     const request: ConnectRequest =
       mode === "udp"
         ? { endpoint: { kind: "udp", bind_addr: udpBind } }
@@ -121,11 +126,26 @@ export function useVehicle() {
     try {
       await connectLink(request);
     } catch (err) {
-      const msg = asErrorMessage(err);
-      setConnectionError(msg);
-      toast.error("Connection failed", { description: msg });
+      if (!cancelledRef.current) {
+        const msg = asErrorMessage(err);
+        setConnectionError(msg);
+        toast.error("Connection failed", { description: msg });
+      }
+    } finally {
+      setIsConnecting(false);
     }
   }, [mode, udpBind, serialPort, baud]);
+
+  const cancelConnect = useCallback(async () => {
+    cancelledRef.current = true;
+    setIsConnecting(false);
+    setConnectionError(null);
+    try {
+      await disconnectLink();
+    } catch {
+      // best-effort cleanup
+    }
+  }, []);
 
   const disconnect = useCallback(async () => {
     try {
@@ -226,6 +246,8 @@ export function useVehicle() {
     availableModes,
     connected,
     connectionError,
+    isConnecting,
+    cancelConnect,
     // Connection form
     connectionMode: mode, setConnectionMode: setMode,
     udpBind, setUdpBind,

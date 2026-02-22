@@ -124,7 +124,9 @@ export default function App() {
           <BottomNav
             activeTab={activeTab}
             onTabChange={setActiveTab}
-            linkState={vehicle.linkState}
+            isConnecting={vehicle.isConnecting}
+            connected={vehicle.connected}
+            connectionError={vehicle.connectionError}
             onSidebarOpen={() => setSidebarOpen(true)}
           />
         )}

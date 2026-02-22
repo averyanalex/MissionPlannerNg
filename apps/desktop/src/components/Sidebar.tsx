@@ -1,6 +1,6 @@
 import {
   Plane, Radio, Battery, Gauge, Compass, Navigation, Satellite,
-  ArrowUp, RotateCcw, CircleDot, RefreshCw, Plug, Unplug, X,
+  ArrowUp, RotateCcw, CircleDot, RefreshCw, Plug, Unplug, Loader2, X,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { ArmSlider } from "./ArmSlider";
@@ -17,12 +17,6 @@ type SidebarProps = {
 function formatMaybe(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) return "--";
   return value.toFixed(1);
-}
-
-function formatLinkState(state: ReturnType<typeof useVehicle>["linkState"]): string {
-  if (state === null) return "Idle";
-  if (typeof state === "string") return state.charAt(0).toUpperCase() + state.slice(1);
-  return `Error`;
 }
 
 export function Sidebar({ vehicle, isMobile, open, onClose }: SidebarProps) {
@@ -68,12 +62,15 @@ export function Sidebar({ vehicle, isMobile, open, onClose }: SidebarProps) {
 function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> }) {
   const {
     telemetry, linkState, vehicleState, connected, connectionError,
+    isConnecting, cancelConnect,
     connectionMode, setConnectionMode, udpBind, setUdpBind,
     serialPort, setSerialPort, baud, setBaud, serialPorts,
     takeoffAlt, setTakeoffAlt, availableModes,
     connect, disconnect, refreshSerialPorts,
     arm, disarm, setFlightMode, takeoff, findModeNumber,
   } = vehicle;
+
+  const formLocked = isConnecting || connected;
 
   return (
     <>
@@ -87,7 +84,8 @@ function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> })
           <select
             value={connectionMode}
             onChange={(e) => setConnectionMode(e.target.value as "udp" | "serial")}
-            className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary"
+            disabled={formLocked}
+            className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <option value="udp">UDP</option>
             <option value="serial">Serial</option>
@@ -98,7 +96,8 @@ function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> })
               value={udpBind}
               onChange={(e) => setUdpBind(e.target.value)}
               placeholder="0.0.0.0:14550"
-              className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary"
+              disabled={formLocked}
+              className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
             />
           ) : (
             <>
@@ -106,12 +105,13 @@ function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> })
                 <select
                   value={serialPort}
                   onChange={(e) => setSerialPort(e.target.value)}
-                  className="flex-1 rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary"
+                  disabled={formLocked}
+                  className="flex-1 rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {serialPorts.length === 0 && <option value="">No ports</option>}
                   {serialPorts.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <Button variant="ghost" size="icon" onClick={refreshSerialPorts}>
+                <Button variant="ghost" size="icon" onClick={refreshSerialPorts} disabled={formLocked}>
                   <RefreshCw className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -119,19 +119,25 @@ function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> })
                 type="number"
                 value={baud}
                 onChange={(e) => setBaud(Number(e.target.value) || 57600)}
-                className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary"
+                disabled={formLocked}
+                className="w-full rounded-md border border-border bg-bg-input px-2.5 py-1.5 text-sm text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </>
           )}
 
-          <div className="flex gap-1.5">
-            <Button size="sm" className="flex-1" onClick={connect} disabled={connected}>
-              <Plug className="h-3.5 w-3.5" /> Connect
+          {isConnecting ? (
+            <Button variant="secondary" size="sm" className="w-full" onClick={cancelConnect}>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Cancel
             </Button>
-            <Button variant="secondary" size="sm" className="flex-1" onClick={disconnect} disabled={!connected}>
+          ) : connected ? (
+            <Button variant="secondary" size="sm" className="w-full" onClick={disconnect}>
               <Unplug className="h-3.5 w-3.5" /> Disconnect
             </Button>
-          </div>
+          ) : (
+            <Button size="sm" className="w-full" onClick={connect}>
+              <Plug className="h-3.5 w-3.5" /> Connect
+            </Button>
+          )}
 
           {connectionError && (
             <p className="rounded-md bg-danger/10 px-2 py-1 text-xs text-danger">{connectionError}</p>
@@ -141,9 +147,15 @@ function SidebarContent({ vehicle }: { vehicle: ReturnType<typeof useVehicle> })
         <div className="mt-2 flex items-center gap-2 text-xs text-text-secondary">
           <div className={cn(
             "h-1.5 w-1.5 rounded-full",
-            connected ? "bg-success" : linkState === "connecting" ? "bg-warning" : "bg-text-muted"
+            isConnecting ? "bg-warning animate-pulse" :
+            connected ? "bg-success" :
+            connectionError ? "bg-danger" :
+            "bg-text-muted"
           )} />
-          {formatLinkState(linkState)}
+          {isConnecting ? "Connecting..." :
+           connected ? "Connected" :
+           connectionError ? "Error" :
+           "Idle"}
         </div>
       </section>
 
