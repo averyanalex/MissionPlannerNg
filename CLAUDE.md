@@ -31,7 +31,7 @@ npm run android:dev              # Launch on Android emulator/device
 npm run android:build            # Build APK
 ```
 
-All commands run from the repo root. Root `package.json` proxies npm scripts to `apps/desktop` via workspaces.
+All commands run from the repo root.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ MAVLink wire format puts home at seq 0 for Mission type. The rest of the codebas
 
 ### Tauri Shell
 
-`apps/desktop/src-tauri/src/lib.rs` - Thin async adapter layer:
+`src-tauri/src/lib.rs` - Thin async adapter layer:
 - `AppState` holds `tokio::sync::Mutex<Option<Vehicle>>` (single-vehicle)
 - `#[tauri::command]` async handlers call `Vehicle` methods directly
 - Watch → Tauri event bridge tasks forward state changes to the frontend

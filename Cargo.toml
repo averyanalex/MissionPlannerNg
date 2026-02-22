@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "apps/desktop/src-tauri",
+    "src-tauri",
     "crates/mavkit",
 ]
 resolver = "2"
