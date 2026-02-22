@@ -4,7 +4,9 @@ target/
 
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
-apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen/android/app/build/
+apps/desktop/src-tauri/gen/android/.gradle/
+apps/desktop/src-tauri/gen/android/local.properties
 
 .direnv/
 result

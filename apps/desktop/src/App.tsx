@@ -16,7 +16,6 @@ import { useSettings } from "./hooks/use-settings";
 import { useParams } from "./hooks/use-params";
 import { useBreakpoint } from "./hooks/use-breakpoint";
 import { setTelemetryRate } from "./telemetry";
-import { cn } from "./lib/utils";
 import "./app.css";
 
 type ActiveTab = "map" | "telemetry" | "hud" | "mission" | "config" | "settings";
@@ -57,13 +56,6 @@ function checkGpuRenderer() {
   if (loseExt) loseExt.loseContext();
 }
 
-function linkDotColor(state: ReturnType<typeof useVehicle>["linkState"]): string {
-  if (state === "connected") return "bg-success";
-  if (state === "connecting") return "bg-warning";
-  if (state === null || state === "disconnected") return "bg-text-muted";
-  return "bg-danger";
-}
-
 export default function App() {
   const vehicle = useVehicle();
   const mission = useMission(vehicle.connected, vehicle.telemetry, vehicle.homePosition);
@@ -83,13 +75,8 @@ export default function App() {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="flex h-screen flex-col bg-bg-primary text-text-primary">
-        {/* Desktop: full top bar with tabs | Mobile: compact header */}
-        {isMobile ? (
-          <header className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-bg-secondary px-3">
-            <span className="text-sm font-bold tracking-tight text-text-primary">MPNG</span>
-            <div className={cn("h-2 w-2 rounded-full", linkDotColor(vehicle.linkState))} />
-          </header>
-        ) : (
+        {/* Desktop: full top bar with tabs */}
+        {!isMobile && (
           <TopBar activeTab={activeTab} onTabChange={setActiveTab} linkState={vehicle.linkState} />
         )}
 
@@ -102,7 +89,10 @@ export default function App() {
             onClose={() => setSidebarOpen(false)}
           />
 
-          <main className="flex-1 overflow-hidden p-2 lg:p-3">
+          <main
+            className="flex-1 overflow-hidden p-2 lg:p-3"
+            style={{ paddingTop: isMobile ? "calc(var(--safe-area-top, 0px) + 0.5rem)" : undefined }}
+          >
             {activeTab === "map" ? (
               <MapPanel vehicle={vehicle} mission={mission} />
             ) : activeTab === "telemetry" ? (

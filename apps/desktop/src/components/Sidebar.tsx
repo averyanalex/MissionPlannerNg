@@ -35,9 +35,10 @@ export function Sidebar({ vehicle, isMobile, open, onClose }: SidebarProps) {
         {/* Drawer panel */}
         <aside
           className={cn(
-            "fixed inset-y-0 left-0 z-50 flex w-72 flex-col gap-3 overflow-y-auto bg-bg-secondary p-3 shadow-xl transition-transform duration-200",
+            "fixed inset-y-0 left-0 z-50 flex w-72 flex-col gap-3 overflow-y-auto bg-bg-secondary px-3 pb-3 shadow-xl transition-transform duration-200",
             open ? "translate-x-0" : "-translate-x-full"
           )}
+          style={{ paddingTop: "calc(var(--safe-area-top, 0px) + 0.75rem)" }}
         >
           <div className="flex items-center justify-between">
             <span className="text-sm font-bold text-text-primary">Vehicle</span>

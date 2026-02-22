@@ -18,6 +18,13 @@
   --color-success: #57e38b;
 }
 
+/* Safe-area insets: --sat/--sab are injected by native Android code;
+   env() provides the fallback for iOS / desktop (resolves to 0 when N/A). */
+:root {
+  --safe-area-top: var(--sat, env(safe-area-inset-top, 0px));
+  --safe-area-bottom: var(--sab, env(safe-area-inset-bottom, 0px));
+}
+
 /* Base resets */
 * {
   box-sizing: border-box;
@@ -27,7 +34,6 @@ html, body, #root {
   width: 100%;
   height: 100%;
   margin: 0;
-  padding-bottom: env(safe-area-inset-bottom);
 }
 
 body {

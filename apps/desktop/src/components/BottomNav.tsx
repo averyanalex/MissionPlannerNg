@@ -25,7 +25,7 @@ export function BottomNav({ activeTab, onTabChange, isConnecting, connected, con
   return (
     <nav
       className="flex shrink-0 items-center justify-around border-t border-border bg-bg-secondary"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "var(--safe-area-bottom, 0px)" }}
     >
       {/* Connection dot — opens sidebar drawer */}
       <button
