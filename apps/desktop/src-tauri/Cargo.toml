@@ -3,17 +3,24 @@ name = "missionplanner_desktop"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "missionplanner_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-mavkit = { path = "../../../crates/mavkit" }
+mavkit = { path = "../../../crates/mavkit", default-features = false, features = ["udp", "ardupilot"] }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-http = "2"
 tokio = { version = "1", features = ["sync"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+mavkit = { path = "../../../crates/mavkit", features = ["serial"] }
 serialport = "4"
 
 [features]

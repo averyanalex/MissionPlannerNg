@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk"
   },
   "dependencies": {
     "@radix-ui/react-dropdown-menu": "^2.1.16",

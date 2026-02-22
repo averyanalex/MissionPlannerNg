@@ -1,9 +1,8 @@
 {
-  "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Default capability for main window",
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-default",
   "windows": ["main"],
-  "platforms": ["linux", "macOS", "windows"],
+  "platforms": ["android"],
   "permissions": [
     "core:default",
     "dialog:default",

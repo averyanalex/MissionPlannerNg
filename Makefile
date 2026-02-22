@@ -10,7 +10,7 @@ MAVPROXY_LOG_FILE ?= /tmp/missionplannerng-mavproxy.log
 
 MP_SITL_UDP_BIND ?= 0.0.0.0:$(SITL_UDP_PORT)
 
-.PHONY: help sitl-up sitl-down sitl-logs wait-tcp mavproxy-up mavproxy-down mavproxy-logs wait-udp bridge-up bridge-down status dev-sitl test-sitl test-sitl-strict
+.PHONY: help sitl-up sitl-down sitl-logs wait-tcp mavproxy-up mavproxy-down mavproxy-logs wait-udp bridge-up bridge-down status dev-sitl test-sitl test-sitl-strict android-dev android-build
 
 help:
 	@printf "MissionPlannerNg SITL helper targets\n\n"
@@ -96,3 +96,9 @@ test-sitl:
 
 test-sitl-strict:
 	MP_SITL_UDP_BIND="$(MP_SITL_UDP_BIND)" MP_SITL_STRICT=1 cargo test -p mavkit --test sitl_roundtrip -- --ignored --nocapture --test-threads=1
+
+android-dev:
+	npm run android:dev
+
+android-build:
+	npm run android:build

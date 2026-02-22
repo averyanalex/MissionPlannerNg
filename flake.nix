@@ -27,9 +27,24 @@
         ];
         pkgs = import nixpkgs {
           inherit system overlays;
+          config.allowUnfree = true;
+          config.android_sdk.accept_license = true;
         };
 
         lib = pkgs.lib;
+
+        androidComposition = pkgs.androidenv.composeAndroidPackages {
+          platformVersions = [ "34" "36" ];
+          buildToolsVersions = [ "34.0.0" "35.0.0" ];
+          includeNDK = true;
+          ndkVersions = [ "27.2.12479018" ];
+          abiVersions = [ "arm64-v8a" "armeabi-v7a" "x86_64" ];
+          includeEmulator = false;
+          includeSources = false;
+          includeSystemImages = false;
+        };
+
+        androidSdk = androidComposition.androidsdk;
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [
@@ -37,6 +52,12 @@
             "rust-analyzer"
             "rust-src"
             "rustfmt"
+          ];
+          targets = [
+            "aarch64-linux-android"
+            "armv7-linux-androideabi"
+            "x86_64-linux-android"
+            "i686-linux-android"
           ];
         };
 
@@ -67,7 +88,9 @@
         devShells.default = pkgs.mkShell {
           packages =
             (with pkgs; [
+              androidSdk
               cargo-tauri
+              jdk17
               nodejs_20
               pkg-config
               rustToolchain
@@ -75,6 +98,9 @@
             ++ lib.optionals pkgs.stdenv.isLinux linuxDeps
             ++ lib.optionals pkgs.stdenv.isDarwin darwinDeps;
 
+          ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
+          NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/27.2.12479018";
+          JAVA_HOME = "${pkgs.jdk17}";
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
           LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux (lib.makeLibraryPath linuxDeps);
 
